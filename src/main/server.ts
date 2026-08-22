@@ -31,6 +31,14 @@ const execAsync = promisify(exec);
 interface SettingsStore {
   openrouterApiKey: string;
   nvidiaNimApiKey: string;
+  openaiApiKey: string;
+  anthropicApiKey: string;
+  deepseekApiKey: string;
+  geminiApiKey: string;
+  groqApiKey: string;
+  togetherApiKey: string;
+  mistralApiKey: string;
+  cohereApiKey: string;
   workspace: string;
 }
 
@@ -59,6 +67,14 @@ const store = new Store<SettingsStore>({
   defaults: {
     openrouterApiKey: '',
     nvidiaNimApiKey: '',
+    openaiApiKey: '',
+    anthropicApiKey: '',
+    deepseekApiKey: '',
+    geminiApiKey: '',
+    groqApiKey: '',
+    togetherApiKey: '',
+    mistralApiKey: '',
+    cohereApiKey: '',
     workspace: '',
   },
 });
@@ -514,7 +530,7 @@ async function agenticLoop(
 // PROVIDER CONFIGURATION
 // ============================================================================
 
-const PROVIDERS: Record<string, { baseUrl: string; getApiKey: () => string; authPrefix: string }> = {
+const PROVIDERS: Record<string, { baseUrl: string; getApiKey: () => string; authPrefix: string; modelsUrl?: string }> = {
   openrouter: {
     baseUrl: 'https://openrouter.ai/api/v1',
     getApiKey: () => store.get('openrouterApiKey'),
@@ -523,6 +539,46 @@ const PROVIDERS: Record<string, { baseUrl: string; getApiKey: () => string; auth
   nvidia_nim: {
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     getApiKey: () => store.get('nvidiaNimApiKey'),
+    authPrefix: 'Bearer ',
+  },
+  openai: {
+    baseUrl: 'https://api.openai.com/v1',
+    getApiKey: () => store.get('openaiApiKey'),
+    authPrefix: 'Bearer ',
+  },
+  anthropic: {
+    baseUrl: 'https://api.anthropic.com/v1',
+    getApiKey: () => store.get('anthropicApiKey'),
+    authPrefix: 'Bearer ',
+  },
+  deepseek: {
+    baseUrl: 'https://api.deepseek.com/v1',
+    getApiKey: () => store.get('deepseekApiKey'),
+    authPrefix: 'Bearer ',
+  },
+  gemini: {
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    getApiKey: () => store.get('geminiApiKey'),
+    authPrefix: 'Bearer ',
+  },
+  groq: {
+    baseUrl: 'https://api.groq.com/openai/v1',
+    getApiKey: () => store.get('groqApiKey'),
+    authPrefix: 'Bearer ',
+  },
+  together: {
+    baseUrl: 'https://api.together.xyz/v1',
+    getApiKey: () => store.get('togetherApiKey'),
+    authPrefix: 'Bearer ',
+  },
+  mistral: {
+    baseUrl: 'https://api.mistral.ai/v1',
+    getApiKey: () => store.get('mistralApiKey'),
+    authPrefix: 'Bearer ',
+  },
+  cohere: {
+    baseUrl: 'https://api.cohere.com/v2',
+    getApiKey: () => store.get('cohereApiKey'),
     authPrefix: 'Bearer ',
   },
 };
@@ -581,39 +637,129 @@ export function startExpressApp(): express.Express {
       }
     }
 
+    // NIM
     const nimKey = store.get('nvidiaNimApiKey');
     if (nimKey) {
-      // Fetch actual models from NVIDIA NIM API
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
         const response = await fetch('https://integrate.api.nvidia.com/v1/models', {
-          headers: { Authorization: `Bearer ${nimKey}` },
-          signal: controller.signal,
+          headers: { Authorization: `Bearer ${nimKey}` }, signal: controller.signal,
         });
         clearTimeout(timeout);
         if (response.ok) {
           const data = await response.json() as any;
           for (const m of data.data || []) {
-            // Only include chat-capable instruct models from NIM
-            // Skip embedding, code completion, reranking, vision, safety, parse, translate, guard, steer models
             const id = m.id.toLowerCase();
-            if (id.includes('embed') || id.includes('vision') || id.includes('safety') ||
-                id.includes('parse') || id.includes('translate') || id.includes('rerank') ||
-                id.includes('guard') || id.includes('steer') || id.includes('coder') ||
-                id.includes('snowflake') || id.includes('arctic') || id.includes('cosmo')) continue;
-            // Only keep models with 'instruct' or 'chat' in the name — these are the ones that actually work for chat
+            if (id.includes('embed') || id.includes('vision') || id.includes('safety') || id.includes('parse') || id.includes('translate') || id.includes('rerank') || id.includes('guard') || id.includes('steer') || id.includes('coder') || id.includes('snowflake') || id.includes('arctic') || id.includes('cosmo')) continue;
             if (!id.includes('instruct') && !id.includes('chat')) continue;
-            models.push({
-              id: m.id,
-              name: m.id.split('/').pop() || m.id,
-              provider: 'nvidia_nim',
-            });
+            models.push({ id: m.id, name: m.id.split('/').pop() || m.id, provider: 'nvidia_nim' });
           }
         }
-      } catch (err) {
-        console.error('[Proxy] Failed to fetch NIM models:', err);
-      }
+      } catch (err) { console.error('[Proxy] NIM models error:', err); }
+    }
+
+    // OpenAI
+    const openaiKey = store.get('openaiApiKey');
+    if (openaiKey) {
+      try {
+        const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000);
+        const r = await fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${openaiKey}` }, signal: c.signal });
+        clearTimeout(t);
+        if (r.ok) {
+          const d = await r.json() as any;
+          for (const m of d.data || []) {
+            if (m.id.startsWith('gpt') || m.id.startsWith('o1') || m.id.startsWith('o3')) {
+              models.push({ id: m.id, name: m.id, provider: 'openai' });
+            }
+          }
+        }
+      } catch (err) { console.error('[Proxy] OpenAI models error:', err); }
+    }
+
+    // Anthropic
+    const antKey = store.get('anthropicApiKey');
+    if (antKey) {
+      const antModels = ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'];
+      for (const id of antModels) { models.push({ id, name: id, provider: 'anthropic' }); }
+    }
+
+    // DeepSeek
+    const dsKey = store.get('deepseekApiKey');
+    if (dsKey) {
+      try {
+        const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000);
+        const r = await fetch('https://api.deepseek.com/v1/models', { headers: { Authorization: `Bearer ${dsKey}` }, signal: c.signal });
+        clearTimeout(t);
+        if (r.ok) {
+          const d = await r.json() as any;
+          for (const m of d.data || []) { models.push({ id: m.id, name: m.id, provider: 'deepseek' }); }
+        }
+      } catch (err) { console.error('[Proxy] DeepSeek models error:', err); }
+    }
+
+    // Gemini
+    const gemKey = store.get('geminiApiKey');
+    if (gemKey) {
+      const gemModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'];
+      for (const id of gemModels) { models.push({ id, name: id, provider: 'gemini' }); }
+    }
+
+    // Groq
+    const groqKey = store.get('groqApiKey');
+    if (groqKey) {
+      try {
+        const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000);
+        const r = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: `Bearer ${groqKey}` }, signal: c.signal });
+        clearTimeout(t);
+        if (r.ok) {
+          const d = await r.json() as any;
+          for (const m of d.data || []) {
+            if (m.id.includes('llama') || m.id.includes('mixtral') || m.id.includes('gemma') || m.id.includes('whisper')) {
+              models.push({ id: m.id, name: m.id, provider: 'groq' });
+            }
+          }
+        }
+      } catch (err) { console.error('[Proxy] Groq models error:', err); }
+    }
+
+    // Together
+    const togKey = store.get('togetherApiKey');
+    if (togKey) {
+      try {
+        const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000);
+        const r = await fetch('https://api.together.xyz/v1/models', { headers: { Authorization: `Bearer ${togKey}` }, signal: c.signal });
+        clearTimeout(t);
+        if (r.ok) {
+          const d = await r.json() as any;
+          for (const m of d.data || []) {
+            if (m.id && (m.id.includes('llama') || m.id.includes('mistral') || m.id.includes('gemma') || m.id.includes('qwen'))) {
+              models.push({ id: m.id, name: m.name || m.id, provider: 'together' });
+            }
+          }
+        }
+      } catch (err) { console.error('[Proxy] Together models error:', err); }
+    }
+
+    // Mistral
+    const mistKey = store.get('mistralApiKey');
+    if (mistKey) {
+      try {
+        const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000);
+        const r = await fetch('https://api.mistral.ai/v1/models', { headers: { Authorization: `Bearer ${mistKey}` }, signal: c.signal });
+        clearTimeout(t);
+        if (r.ok) {
+          const d = await r.json() as any;
+          for (const m of d.data || []) { models.push({ id: m.id, name: m.id, provider: 'mistral' }); }
+        }
+      } catch (err) { console.error('[Proxy] Mistral models error:', err); }
+    }
+
+    // Cohere
+    const cohKey = store.get('cohereApiKey');
+    if (cohKey) {
+      const cohModels = ['command-r-plus', 'command-r', 'command-light'];
+      for (const id of cohModels) { models.push({ id, name: id, provider: 'cohere' }); }
     }
 
     res.json({ models });
@@ -818,6 +964,14 @@ export function startExpressApp(): express.Express {
     res.json({
       openrouter: !!store.get('openrouterApiKey'),
       nvidia_nim: !!store.get('nvidiaNimApiKey'),
+      openai: !!store.get('openaiApiKey'),
+      anthropic: !!store.get('anthropicApiKey'),
+      deepseek: !!store.get('deepseekApiKey'),
+      gemini: !!store.get('geminiApiKey'),
+      groq: !!store.get('groqApiKey'),
+      together: !!store.get('togetherApiKey'),
+      mistral: !!store.get('mistralApiKey'),
+      cohere: !!store.get('cohereApiKey'),
     });
   });
 

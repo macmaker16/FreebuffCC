@@ -18,7 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getApiKeys: () => ipcRenderer.invoke('get-api-keys'),
 
   /** Save API keys to electron-store */
-  setApiKeys: (keys: { openrouterApiKey?: string; nvidiaNimApiKey?: string }) =>
+  setApiKeys: (keys: Record<string, string>) =>
     ipcRenderer.invoke('set-api-keys', keys),
 
   /** Get the current workspace folder path */
@@ -38,8 +38,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 export interface ElectronAPI {
   getServerPort: () => Promise<number>;
   openExternal: (url: string) => Promise<void>;
-  getApiKeys: () => Promise<{ openrouterApiKey: string; nvidiaNimApiKey: string }>;
-  setApiKeys: (keys: { openrouterApiKey?: string; nvidiaNimApiKey?: string }) => Promise<{ success: boolean }>;
+  getApiKeys: () => Promise<Record<string, string>>;
+  setApiKeys: (keys: Record<string, string>) => Promise<{ success: boolean }>;
   getWorkspace: () => Promise<string>;
   setWorkspace: (path: string) => Promise<{ success: boolean }>;
   selectFolder: () => Promise<string | null>;

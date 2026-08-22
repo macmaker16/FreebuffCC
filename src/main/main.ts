@@ -127,37 +127,41 @@ function setupIPC(): void {
     shell.openExternal(url);
   });
 
-  /** Get current API key status from the Express server's store */
+  const ALL_PROVIDER_KEYS = ['openrouterApiKey', 'nvidiaNimApiKey', 'openaiApiKey', 'anthropicApiKey', 'deepseekApiKey', 'geminiApiKey', 'groqApiKey', 'togetherApiKey', 'mistralApiKey', 'cohereApiKey'];
+  const DEFAULTS: Record<string, string> = {};
+  for (const k of ALL_PROVIDER_KEYS) DEFAULTS[k] = '';
+  DEFAULTS['workspace'] = '';
+
+  /** Get current API keys from electron-store */
   ipcMain.handle('get-api-keys', () => {
-    // Re-export from server module's store
     const Store = require('electron-store');
-    const store = new Store({ defaults: { openrouterApiKey: '', nvidiaNimApiKey: '' } });
-    return {
-      openrouterApiKey: store.get('openrouterApiKey'),
-      nvidiaNimApiKey: store.get('nvidiaNimApiKey'),
-    };
+    const store = new Store({ defaults: DEFAULTS });
+    const result: Record<string, string> = {};
+    for (const k of ALL_PROVIDER_KEYS) result[k] = store.get(k);
+    return result;
   });
 
-  /** Save API keys to electron-store (called from Settings view) */
-  ipcMain.handle('set-api-keys', (_event, keys: { openrouterApiKey?: string; nvidiaNimApiKey?: string }) => {
+  /** Save API keys to electron-store */
+  ipcMain.handle('set-api-keys', (_event, keys: Record<string, string>) => {
     const Store = require('electron-store');
-    const store = new Store({ defaults: { openrouterApiKey: '', nvidiaNimApiKey: '', workspace: '' } });
-    if (keys.openrouterApiKey !== undefined) store.set('openrouterApiKey', keys.openrouterApiKey);
-    if (keys.nvidiaNimApiKey !== undefined) store.set('nvidiaNimApiKey', keys.nvidiaNimApiKey);
+    const store = new Store({ defaults: DEFAULTS });
+    for (const [k, v] of Object.entries(keys)) {
+      if (v !== undefined && ALL_PROVIDER_KEYS.includes(k)) store.set(k, v);
+    }
     return { success: true };
   });
 
   /** Get the current workspace folder */
   ipcMain.handle('get-workspace', () => {
     const Store = require('electron-store');
-    const store = new Store({ defaults: { openrouterApiKey: '', nvidiaNimApiKey: '', workspace: '' } });
+    const store = new Store({ defaults: DEFAULTS });
     return store.get('workspace') || process.cwd();
   });
 
   /** Set the workspace folder */
   ipcMain.handle('set-workspace', (_event, workspacePath: string) => {
     const Store = require('electron-store');
-    const store = new Store({ defaults: { openrouterApiKey: '', nvidiaNimApiKey: '', workspace: '' } });
+    const store = new Store({ defaults: DEFAULTS });
     store.set('workspace', workspacePath);
     return { success: true };
   });

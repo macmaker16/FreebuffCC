@@ -2,11 +2,11 @@
  * Michaelangelo - TypeScript Type Definitions
  */
 
-/** A model fetched from OpenRouter or hardcoded for NIM */
+/** A model fetched from any provider */
 export interface Model {
   id: string;
   name: string;
-  provider: 'openrouter' | 'nvidia_nim';
+  provider: string;
   description?: string;
 }
 
@@ -39,5 +39,13 @@ export interface ChatMessage {
 export interface Settings {
   openrouterApiKey: string;
   nvidiaNimApiKey: string;
+  openaiApiKey: string;
+  anthropicApiKey: string;
+  deepseekApiKey: string;
+  geminiApiKey: string;
+  groqApiKey: string;
+  togetherApiKey: string;
+  mistralApiKey: string;
+  cohereApiKey: string;
   workspace: string;
 }

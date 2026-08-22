@@ -41,38 +41,43 @@ function App() {
     fetchModels().then(setModels).catch(console.error);
   }, [apiReady]);
 
-  // Auto-test all models once when models are loaded
+  // Auto-test all models in parallel (batches of 10 to avoid flooding)
   const autoTestAll = useCallback(async (modelList: Model[]) => {
     if (autoTestDone.current || modelList.length === 0) return;
     autoTestDone.current = true;
     setAutoTestRunning(true);
 
-    for (const model of modelList) {
-      // Mark as testing
-      setModelStatuses(prev => {
-        const next = new Map(prev);
-        next.set(model.id, { status: 'testing' });
-        return next;
-      });
+    // Mark all as testing
+    setModelStatuses(prev => {
+      const next = new Map(prev);
+      for (const m of modelList) next.set(m.id, { status: 'testing' });
+      return next;
+    });
 
-      try {
-        const result = await testModel(model.id, model.provider);
-        setModelStatuses(prev => {
-          const next = new Map(prev);
-          next.set(model.id, {
-            status: result.success ? 'online' : 'offline',
-            lastTested: Date.now(),
-            error: result.error,
+    // Test in parallel batches of 10
+    const BATCH = 10;
+    for (let i = 0; i < modelList.length; i += BATCH) {
+      const batch = modelList.slice(i, i + BATCH);
+      await Promise.allSettled(batch.map(async (model) => {
+        try {
+          const result = await testModel(model.id, model.provider);
+          setModelStatuses(prev => {
+            const next = new Map(prev);
+            next.set(model.id, {
+              status: result.success ? 'online' : 'offline',
+              lastTested: Date.now(),
+              error: result.error,
+            });
+            return next;
           });
-          return next;
-        });
-      } catch {
-        setModelStatuses(prev => {
-          const next = new Map(prev);
-          next.set(model.id, { status: 'offline', lastTested: Date.now(), error: 'Request failed' });
-          return next;
-        });
-      }
+        } catch {
+          setModelStatuses(prev => {
+            const next = new Map(prev);
+            next.set(model.id, { status: 'offline', lastTested: Date.now(), error: 'Request failed' });
+            return next;
+          });
+        }
+      }));
     }
     setAutoTestRunning(false);
   }, []);
