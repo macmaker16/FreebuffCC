@@ -6,13 +6,12 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Save, Eye, EyeOff, Key, Globe, Server, CheckCircle, FolderOpen, Folder } from 'lucide-react';
+import { Save, Eye, EyeOff, Key, Globe, Server, CheckCircle } from 'lucide-react';
 
 /** Settings interface */
 interface Settings {
   openrouterApiKey: string;
   nvidiaNimApiKey: string;
-  workspace: string;
 }
 
 interface Props {
@@ -20,7 +19,7 @@ interface Props {
 }
 
 export default function SettingsView({ onSettingsSaved }: Props) {
-  const [form, setForm] = useState<Settings>({ openrouterApiKey: '', nvidiaNimApiKey: '', workspace: '' });
+  const [form, setForm] = useState<Settings>({ openrouterApiKey: '', nvidiaNimApiKey: '' });
   const [showOR, setShowOR] = useState(false);
   const [showNIM, setShowNIM] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -28,11 +27,8 @@ export default function SettingsView({ onSettingsSaved }: Props) {
 
   // Load settings from electron-store via IPC on mount
   useEffect(() => {
-    Promise.all([
-      window.electronAPI.getApiKeys(),
-      window.electronAPI.getWorkspace(),
-    ]).then(([keys, workspace]) => {
-      setForm({ ...keys, workspace });
+    window.electronAPI.getApiKeys().then(keys => {
+      setForm(keys);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
@@ -44,18 +40,9 @@ export default function SettingsView({ onSettingsSaved }: Props) {
 
   const handleSave = async () => {
     await window.electronAPI.setApiKeys(form);
-    await window.electronAPI.setWorkspace(form.workspace);
     setSaved(true);
     onSettingsSaved();
     setTimeout(() => setSaved(false), 2000);
-  };
-
-  const handleSelectFolder = async () => {
-    const folder = await window.electronAPI.selectFolder();
-    if (folder) {
-      setForm(prev => ({ ...prev, workspace: folder }));
-      setSaved(false);
-    }
   };
 
   return (
@@ -73,41 +60,6 @@ export default function SettingsView({ onSettingsSaved }: Props) {
       </div>
 
       <div className="max-w-2xl space-y-6">
-        {/* Workspace Folder */}
-        <section className="bg-dark-900 rounded-xl border border-dark-700 p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Folder size={20} className="text-purple-400" />
-            <h3 className="text-lg font-semibold">Workspace Folder</h3>
-          </div>
-          <p className="text-sm text-dark-400 mb-4">
-            The folder where the AI agent will create and modify files. All file operations are restricted to this directory for safety.
-          </p>
-          <div className="flex gap-3">
-            <div className="flex-1 relative">
-              <FolderOpen size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-500" />
-              <input
-                type="text"
-                value={form.workspace}
-                onChange={e => { setForm(prev => ({ ...prev, workspace: e.target.value })); setSaved(false); }}
-                placeholder="Click Browse to select a folder..."
-                className="w-full pl-10 pr-4 py-3 bg-dark-800 border border-dark-700 rounded-lg font-mono text-sm focus:outline-none focus:border-brand-500"
-              />
-            </div>
-            <button
-              onClick={handleSelectFolder}
-              className="px-4 py-3 bg-dark-800 hover:bg-dark-700 border border-dark-700 rounded-lg transition-colors flex items-center gap-2"
-            >
-              <FolderOpen size={16} />
-              Browse
-            </button>
-          </div>
-          {form.workspace && (
-            <p className="text-xs text-dark-500 mt-2">
-              Active workspace: <span className="text-dark-300 font-mono">{form.workspace}</span>
-            </p>
-          )}
-        </section>
-
         {/* Info */}
         <div className="bg-brand-600/10 border border-brand-500/30 rounded-xl p-4">
           <p className="text-sm text-brand-300">

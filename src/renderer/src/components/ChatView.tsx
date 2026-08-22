@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Bot, User, Trash2, AlertCircle } from 'lucide-react';
+import { Send, Bot, User, Trash2, AlertCircle, FolderOpen, Folder, Check } from 'lucide-react';
 import { Model, ChatMessage } from '../types';
 import { sendChat, generateId } from '../services/api';
 
@@ -19,13 +19,30 @@ export default function ChatView({ activeModel }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [workspace, setWorkspace] = useState('');
+  const [workspaceSaved, setWorkspaceSaved] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load workspace on mount
+  useEffect(() => {
+    window.electronAPI.getWorkspace().then(setWorkspace).catch(() => {});
+  }, []);
 
   // Auto-scroll
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  const handleSelectFolder = async () => {
+    const folder = await window.electronAPI.selectFolder();
+    if (folder) {
+      setWorkspace(folder);
+      await window.electronAPI.setWorkspace(folder);
+      setWorkspaceSaved(true);
+      setTimeout(() => setWorkspaceSaved(false), 2000);
+    }
+  };
 
   const handleSend = async () => {
     const text = input.trim();
@@ -79,23 +96,41 @@ export default function ChatView({ activeModel }: Props) {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
-        <div>
-          <h2 className="text-xl font-bold">Chat</h2>
-          {activeModel ? (
-            <p className="text-sm text-dark-400">
-              <span className="text-brand-400">{activeModel.name}</span>
-              <span className="text-dark-600 mx-2">•</span>
-              <span>{activeModel.provider === 'openrouter' ? 'OpenRouter' : 'Nvidia NIM'}</span>
-            </p>
-          ) : (
-            <p className="text-sm text-yellow-500">No model selected — go to Models tab</p>
-          )}
+      <div className="px-6 py-4 border-b border-dark-700">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-xl font-bold">Chat</h2>
+            {activeModel ? (
+              <p className="text-sm text-dark-400">
+                <span className="text-brand-400">{activeModel.name}</span>
+                <span className="text-dark-600 mx-2">•</span>
+                <span>{activeModel.provider === 'openrouter' ? 'OpenRouter' : 'Nvidia NIM'}</span>
+              </p>
+            ) : (
+              <p className="text-sm text-yellow-500">No model selected — go to Models tab</p>
+            )}
+          </div>
+          <button onClick={handleClear} disabled={messages.length === 0}
+            className="p-2 hover:bg-dark-800 rounded-lg transition-colors text-dark-400 hover:text-white disabled:opacity-50" title="Clear chat">
+            <Trash2 size={18} />
+          </button>
         </div>
-        <button onClick={handleClear} disabled={messages.length === 0}
-          className="p-2 hover:bg-dark-800 rounded-lg transition-colors text-dark-400 hover:text-white disabled:opacity-50" title="Clear chat">
-          <Trash2 size={18} />
-        </button>
+
+        {/* Workspace Selector */}
+        <div className="flex items-center gap-2">
+          <Folder size={14} className="text-purple-400" />
+          <span className="text-xs text-dark-500">Workspace:</span>
+          <div className="flex-1 flex items-center gap-2">
+            <span className="text-xs font-mono text-dark-300 truncate max-w-[300px]">
+              {workspace || 'Not set — click Browse to select'}</span>
+            <button
+              onClick={handleSelectFolder}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded transition-colors"
+            >
+              {workspaceSaved ? <><Check size={12} className="text-green-400" /> Saved</> : <><FolderOpen size={12} /> Browse</>}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Messages */}
