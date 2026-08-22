@@ -582,19 +582,29 @@ export function startExpressApp(): express.Express {
 
     const nimKey = store.get('nvidiaNimApiKey');
     if (nimKey) {
-      const nimModels = [
-        { id: 'nvidia/llama-3.1-nemotron-70b-instruct', name: 'Nemotron 70B' },
-        { id: 'nvidia/llama-3.1-8b-instruct', name: 'Llama 3.1 8B' },
-        { id: 'meta/llama-3.1-405b-instruct', name: 'Llama 3.1 405B' },
-        { id: 'meta/llama-3.1-70b-instruct', name: 'Llama 3.1 70B' },
-        { id: 'meta/llama-3.1-8b-instruct', name: 'Llama 3.1 8B (Meta)' },
-        { id: 'mistralai/mistral-large-2-instruct', name: 'Mistral Large 2' },
-        { id: 'mistralai/mixtral-8x22b-instruct-v0.1', name: 'Mixtral 8x22B' },
-        { id: 'google/gemma-2-27b-it', name: 'Gemma 2 27B' },
-        { id: 'microsoft/phi-3-mini-128k-instruct', name: 'Phi-3 Mini' },
-      ];
-      for (const m of nimModels) {
-        models.push({ id: m.id, name: m.name, provider: 'nvidia_nim' });
+      // Fetch actual models from NVIDIA NIM API
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        const response = await fetch('https://integrate.api.nvidia.com/v1/models', {
+          headers: { Authorization: `Bearer ${nimKey}` },
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (response.ok) {
+          const data = await response.json() as any;
+          for (const m of data.data || []) {
+            // Skip embedding and non-chat models
+            if (m.id.includes('embed') || m.id.includes('vision') || m.id.includes('safety') || m.id.includes('parse') || m.id.includes('translate')) continue;
+            models.push({
+              id: m.id,
+              name: m.id.split('/').pop() || m.id,
+              provider: 'nvidia_nim',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[Proxy] Failed to fetch NIM models:', err);
       }
     }
 
