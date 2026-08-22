@@ -184,7 +184,7 @@ export default function ModelManager({
                   className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all ${
                     isActive ? 'bg-brand-600/15 border border-brand-500/40' : 'hover:bg-dark-800 border border-transparent'
                   }`}
-                  onClick={() => isOnline && onModelSelect(model)}
+                  onClick={() => { if (st?.status !== 'offline') onModelSelect(model); }}
                 >
                   {/* Status dot */}
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
@@ -206,14 +206,14 @@ export default function ModelManager({
 
                   {/* Selection checkbox */}
                   <button
-                    onClick={(e) => { e.stopPropagation(); if (isOnline) onModelSelect(model); }}
-                    disabled={!isOnline}
+                    onClick={(e) => { e.stopPropagation(); if (st?.status !== 'offline') onModelSelect(model); }}
+                    disabled={st?.status === 'offline'}
                     className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border transition-colors ${
                       isActive ? 'bg-brand-600 border-brand-500' :
-                      isOnline ? 'border-dark-600 hover:border-brand-500' :
+                      st?.status !== 'offline' ? 'border-dark-600 hover:border-brand-500' :
                       'border-dark-700 opacity-30 cursor-not-allowed'
                     }`}
-                    title={isActive ? 'Active' : isOnline ? 'Select' : 'Offline'}
+                    title={isActive ? 'Active' : 'Select model'}
                   >
                     {isActive && <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6L5 9L10 3" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                   </button>
