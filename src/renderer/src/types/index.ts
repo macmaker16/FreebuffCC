@@ -10,7 +10,17 @@ export interface Model {
   description?: string;
 }
 
-/** UI state attached to each model card */
+/** Status of a model after auto-test or manual test */
+export type ModelOnlineStatus = 'untested' | 'testing' | 'online' | 'offline';
+
+/** Persistent online status for a model */
+export interface ModelStatus {
+  status: ModelOnlineStatus;
+  lastTested?: number;
+  error?: string;
+}
+
+/** UI state attached to each model row */
 export interface ModelState {
   testStatus: 'idle' | 'testing' | 'success' | 'failed';
   testResponse?: string;

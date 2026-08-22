@@ -1,21 +1,22 @@
 /**
  * Michaelangelo - Chat View Component
  * 
- * Main chat interface with streaming support.
- * Shows the active model/provider at the top.
- * Messages are sent through the Express proxy.
+ * Compact chat interface with smaller text and bigger chat area.
+ * Shows model status, workspace selector, and fallback notifications.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Bot, User, Trash2, AlertCircle, FolderOpen, Folder, Check } from 'lucide-react';
-import { Model, ChatMessage } from '../types';
+import { Send, Bot, User, Trash2, AlertCircle, FolderOpen, Folder, Check, Wifi, WifiOff } from 'lucide-react';
+import { Model, ModelStatus, ChatMessage } from '../types';
 import { sendChat, generateId } from '../services/api';
 
 interface Props {
   activeModel: Model | null;
+  modelStatuses: Map<string, ModelStatus>;
+  fallbackMsg: string | null;
 }
 
-export default function ChatView({ activeModel }: Props) {
+export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -24,12 +25,10 @@ export default function ChatView({ activeModel }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load workspace on mount
   useEffect(() => {
     window.electronAPI.getWorkspace().then(setWorkspace).catch(() => {});
   }, []);
 
-  // Auto-scroll
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -48,7 +47,6 @@ export default function ChatView({ activeModel }: Props) {
     const text = input.trim();
     if (!text || !activeModel || loading) return;
 
-    // Add user message
     const userMsg: ChatMessage = {
       id: generateId(), role: 'user', content: text, timestamp: Date.now(),
     };
@@ -59,7 +57,6 @@ export default function ChatView({ activeModel }: Props) {
     try {
       const apiMessages = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }));
       const res = await sendChat(apiMessages, activeModel.id);
-
       const content = res.choices?.[0]?.message?.content || 'No response';
       const assistantMsg: ChatMessage = {
         id: generateId(), role: 'assistant', content, timestamp: Date.now(),
@@ -86,92 +83,105 @@ export default function ChatView({ activeModel }: Props) {
 
   const handleClear = () => { setMessages([]); };
 
-  // Auto-resize textarea
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     e.target.style.height = 'auto';
-    e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px';
+    e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
   };
+
+  const activeModelStatus = activeModel ? modelStatuses.get(activeModel.id) : null;
+  const isModelOnline = activeModelStatus?.status === 'online';
 
   return (
     <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="px-6 py-4 border-b border-dark-700">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h2 className="text-xl font-bold">Chat</h2>
+      {/* Header — compact */}
+      <div className="px-4 py-2 border-b border-dark-700 flex items-center justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
             {activeModel ? (
-              <p className="text-sm text-dark-400">
-                <span className="text-brand-400">{activeModel.name}</span>
-                <span className="text-dark-600 mx-2">•</span>
-                <span>{activeModel.provider === 'openrouter' ? 'OpenRouter' : 'Nvidia NIM'}</span>
-              </p>
+              <>
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isModelOnline ? 'bg-green-500' : 'bg-red-500'}`} />
+                <span className="text-xs font-medium truncate">{activeModel.name}</span>
+                <span className="text-[10px] text-dark-500">
+                  {activeModel.provider === 'openrouter' ? 'OR' : 'NIM'}
+                </span>
+              </>
             ) : (
-              <p className="text-sm text-yellow-500">No model selected — go to Models tab</p>
+              <span className="text-xs text-yellow-500">No model — Models tab</span>
             )}
           </div>
-          <button onClick={handleClear} disabled={messages.length === 0}
-            className="p-2 hover:bg-dark-800 rounded-lg transition-colors text-dark-400 hover:text-white disabled:opacity-50" title="Clear chat">
-            <Trash2 size={18} />
-          </button>
         </div>
 
-        {/* Workspace Selector */}
         <div className="flex items-center gap-2">
-          <Folder size={14} className="text-purple-400" />
-          <span className="text-xs text-dark-500">Workspace:</span>
-          <div className="flex-1 flex items-center gap-2">
-            <span className="text-xs font-mono text-dark-300 truncate max-w-[300px]">
-              {workspace || 'Not set — click Browse to select'}</span>
+          {/* Workspace */}
+          <div className="flex items-center gap-1">
+            <Folder size={10} className="text-purple-400" />
+            <span className="text-[10px] text-dark-500 max-w-[120px] truncate" title={workspace}>
+              {workspace || 'No folder'}
+            </span>
             <button
               onClick={handleSelectFolder}
-              className="flex items-center gap-1 px-2 py-1 text-xs bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded transition-colors"
+              className="text-[10px] px-1.5 py-0.5 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded transition-colors"
             >
-              {workspaceSaved ? <><Check size={12} className="text-green-400" /> Saved</> : <><FolderOpen size={12} /> Browse</>}
+              {workspaceSaved ? <Check size={9} className="text-green-400" /> : <FolderOpen size={9} />}
             </button>
           </div>
+
+          {/* Clear */}
+          <button onClick={handleClear} disabled={messages.length === 0}
+            className="p-1 hover:bg-dark-800 rounded transition-colors text-dark-500 hover:text-white disabled:opacity-30" title="Clear">
+            <Trash2 size={12} />
+          </button>
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4 min-h-0">
+      {/* Fallback notification */}
+      {fallbackMsg && (
+        <div className="px-4 py-1.5 bg-yellow-500/10 border-b border-yellow-500/30 text-yellow-400 text-[11px] flex items-center gap-1.5 animate-fade-in">
+          <WifiOff size={12} />
+          {fallbackMsg}
+        </div>
+      )}
+
+      {/* Messages — big area, smaller text */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 min-h-0">
         {messages.length === 0 && !loading ? (
           <div className="flex flex-col items-center justify-center h-full text-dark-500">
-            <Bot size={64} className="mb-4 opacity-50" />
-            <p className="text-lg">Start a conversation</p>
-            <p className="text-sm">
-              {activeModel ? 'Type a message below' : 'Select a model first'}
+            <Bot size={40} className="mb-2 opacity-30" />
+            <p className="text-xs">Start a conversation</p>
+            <p className="text-[10px]">
+              {activeModel ? 'Type below' : 'Select a model first'}
             </p>
           </div>
         ) : (
           <>
             {messages.map(msg => (
-              <div key={msg.id} className={`flex gap-3 animate-fade-in ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div key={msg.id} className={`flex gap-2 animate-fade-in ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 {msg.role === 'assistant' && (
-                  <div className="w-8 h-8 rounded-lg bg-brand-600/20 flex items-center justify-center flex-shrink-0">
-                    <Bot size={18} className="text-brand-400" />
+                  <div className="w-5 h-5 rounded bg-brand-600/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Bot size={11} className="text-brand-400" />
                   </div>
                 )}
-                <div className={`max-w-[70%] rounded-xl px-4 py-3 ${msg.role === 'user' ? 'bg-brand-600 text-white' : 'bg-dark-800 text-dark-100'}`}>
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                <div className={`max-w-[80%] rounded-lg px-3 py-2 ${msg.role === 'user' ? 'bg-brand-600 text-white' : 'bg-dark-800 text-dark-100'}`}>
+                  <p className="whitespace-pre-wrap text-xs leading-relaxed">{msg.content}</p>
                 </div>
                 {msg.role === 'user' && (
-                  <div className="w-8 h-8 rounded-lg bg-dark-700 flex items-center justify-center flex-shrink-0">
-                    <User size={18} />
+                  <div className="w-5 h-5 rounded bg-dark-700 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <User size={11} />
                   </div>
                 )}
               </div>
             ))}
             {loading && (
-              <div className="flex gap-3 justify-start">
-                <div className="w-8 h-8 rounded-lg bg-brand-600/20 flex items-center justify-center flex-shrink-0">
-                  <Bot size={18} className="text-brand-400" />
+              <div className="flex gap-2 justify-start">
+                <div className="w-5 h-5 rounded bg-brand-600/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Bot size={11} className="text-brand-400" />
                 </div>
-                <div className="rounded-xl px-4 py-3 bg-dark-800">
-                  <div className="flex gap-1">
-                    <div className="w-2 h-2 bg-dark-500 rounded-full typing-dot" />
-                    <div className="w-2 h-2 bg-dark-500 rounded-full typing-dot" />
-                    <div className="w-2 h-2 bg-dark-500 rounded-full typing-dot" />
+                <div className="rounded-lg px-3 py-2 bg-dark-800">
+                  <div className="flex gap-0.5">
+                    <div className="w-1.5 h-1.5 bg-dark-500 rounded-full typing-dot" />
+                    <div className="w-1.5 h-1.5 bg-dark-500 rounded-full typing-dot" />
+                    <div className="w-1.5 h-1.5 bg-dark-500 rounded-full typing-dot" />
                   </div>
                 </div>
               </div>
@@ -181,28 +191,28 @@ export default function ChatView({ activeModel }: Props) {
         <div ref={endRef} />
       </div>
 
-      {/* Input */}
-      <div className="px-6 py-4 border-t border-dark-700">
+      {/* Input — compact */}
+      <div className="px-4 py-2 border-t border-dark-700">
         {!activeModel && (
-          <div className="flex items-center gap-2 text-yellow-500 text-sm mb-3">
-            <AlertCircle size={16} />
-            <span>Select a model in the Models tab</span>
+          <div className="flex items-center gap-1 text-yellow-500 text-[10px] mb-1">
+            <AlertCircle size={10} />
+            <span>Select a model in Models tab</span>
           </div>
         )}
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <textarea
             ref={inputRef}
             value={input}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
-            placeholder={activeModel ? 'Type your message... (Enter to send)' : 'Select a model first...'}
+            placeholder={activeModel ? 'Message... (Enter)' : 'Select model...'}
             disabled={!activeModel || loading}
             rows={1}
-            className="flex-1 px-4 py-3 bg-dark-900 border border-dark-700 rounded-xl text-white placeholder-dark-500 resize-none focus:outline-none focus:border-brand-500 disabled:opacity-50"
+            className="flex-1 px-3 py-1.5 bg-dark-900 border border-dark-700 rounded-lg text-xs text-white placeholder-dark-500 resize-none focus:outline-none focus:border-brand-500 disabled:opacity-50"
           />
           <button onClick={handleSend} disabled={!activeModel || loading || !input.trim()}
-            className="px-4 py-3 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-600/50 rounded-xl transition-colors">
-            <Send size={20} />
+            className="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-600/50 rounded-lg transition-colors">
+            <Send size={14} />
           </button>
         </div>
       </div>
