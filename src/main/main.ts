@@ -176,6 +176,30 @@ function setupIPC(): void {
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
   });
+
+  // --- Permission system ---
+  // Stores pending permission requests so the orchestrator can wait for them
+  const pendingPermissions = new Map<string, { resolve: (v: any) => void }>();
+
+  /** Permission request from agent (called by orchestrator, sends to renderer) */
+  ipcMain.handle('permission-request', (_event, request: { id: string; description: string; type: string }) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('permission-request', request);
+    }
+    return new Promise((resolve) => {
+      pendingPermissions.set(request.id, { resolve });
+    });
+  });
+
+  /** Permission response from user (called by renderer, resolves the orchestrator promise) */
+  ipcMain.handle('permission-response', (_event, response: { requestId: string; action: string; alwaysAllow?: boolean }) => {
+    const pending = pendingPermissions.get(response.requestId);
+    if (pending) {
+      pendingPermissions.delete(response.requestId);
+      pending.resolve(response);
+    }
+    return { success: true };
+  });
 }
 
 // ============================================================================

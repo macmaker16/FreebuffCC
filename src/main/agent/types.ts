@@ -98,13 +98,17 @@ export interface ExecutionContext {
   projectInstructions?: string;
   /** Abort signal for user interruption */
   abortSignal?: AbortSignal;
+  /** Permission manager for human-in-the-loop */
+  permissionManager?: any;
+  /** Request permission callback (sends to frontend) */
+  onPermissionRequest?: (request: any) => void;
 }
 
 // ============================================================================
-// THREE-PHASE LOOP
+// FOUR-PHASE LOOP
 // ============================================================================
 
-export type AgentPhase = 'gather_context' | 'take_action' | 'verify_results';
+export type AgentPhase = 'gather_context' | 'plan' | 'execute' | 'verify_results';
 
 export interface PhaseResult {
   phase: AgentPhase;

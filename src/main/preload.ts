@@ -29,6 +29,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   /** Open a native folder picker dialog */
   selectFolder: () => ipcRenderer.invoke('select-folder'),
+
+  /** Permission system */
+  respondPermission: (response: { requestId: string; action: string; alwaysAllow?: boolean }) =>
+    ipcRenderer.invoke('permission-response', response),
+  onPermissionRequest: (callback: (request: { id: string; description: string; type: string }) => void) => {
+    ipcRenderer.on('permission-request', (_event, request) => callback(request));
+  },
 });
 
 /**
@@ -43,4 +50,6 @@ export interface ElectronAPI {
   getWorkspace: () => Promise<string>;
   setWorkspace: (path: string) => Promise<{ success: boolean }>;
   selectFolder: () => Promise<string | null>;
+  respondPermission: (response: { requestId: string; action: string; alwaysAllow?: boolean }) => Promise<{ success: boolean }>;
+  onPermissionRequest: (callback: (request: { id: string; description: string; type: string }) => void) => void;
 }

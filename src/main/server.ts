@@ -903,7 +903,7 @@ export function startExpressApp(): express.Express {
         apiKey,
         authPrefix: provider.authPrefix,
         workspace: getWorkspaceDir(),
-        maxIterations: 20,
+        maxIterations: 12,
         enableMemory: true,
         enableMCP: false, // Enable when MCP servers are configured
       });
