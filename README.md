@@ -2,11 +2,15 @@
 
 A standalone Windows desktop application for interacting with AI models through OpenRouter and NVIDIA NIM APIs. Built with Electron, React, TypeScript, and an internal Express proxy server.
 
+[![CI](https://github.com/macmaker16/FreebuffCC/actions/workflows/ci.yml/badge.svg)](https://github.com/macmaker16/FreebuffCC/actions/workflows/ci.yml)
 ![Electron](https://img.shields.io/badge/Electron-28-47848f)
 ![React](https://img.shields.io/badge/React-18-61dafb)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)
 ![Tailwind](https://img.shields.io/badge/Tailwind-3-06b6d4)
 ![Express](https://img.shields.io/badge/Express-4-000000)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+[![Download](https://img.shields.io/badge/Download-FreebuffCC.exe-blue)](https://github.com/macmaker16/FreebuffCC/releases/latest)
 
 ---
 
