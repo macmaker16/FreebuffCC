@@ -1,18 +1,27 @@
 /**
- * FreebuffCC - Express Proxy Server
+ * FreebuffCC - Express Proxy Server with Agentic Tool Execution
  * 
- * This lightweight Express server:
- * 1. Proxies chat requests to OpenRouter or Nvidia NIM based on the model
- * 2. Securely injects API keys from electron-store into outgoing requests
- * 3. Fetches available model lists from both providers
- * 4. Handles CORS so the React frontend can call localhost
+ * This server:
+ * 1. Proxies chat requests to OpenRouter or Nvidia NIM
+ * 2. Implements an agentic loop for autonomous tool execution
+ * 3. Securely executes file operations and terminal commands
+ * 4. Manages API keys via electron-store
  * 
- * All external API calls go through this server — the frontend never
- * touches API keys directly.
+ * The agentic loop allows the AI to:
+ * - Write files to disk
+ * - Read files from disk
+ * - Execute terminal commands
+ * - Loop until task completion
  */
 
 import express, { Request, Response } from 'express';
 import Store from 'electron-store';
+import { exec, spawn } from 'child_process';
+import { readFile, writeFile, mkdir, access } from 'fs/promises';
+import { dirname, resolve, isAbsolute } from 'path';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 // ============================================================================
 // TYPES
@@ -23,14 +32,27 @@ interface SettingsStore {
   nvidiaNimApiKey: string;
 }
 
+interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+interface ChatMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content?: string | null;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+  name?: string;
+}
+
 // ============================================================================
 // SETTINGS STORE
 // ============================================================================
 
-/**
- * electron-store instance for persisting API keys.
- * Keys are stored in the OS-standard app data directory.
- */
 const store = new Store<SettingsStore>({
   defaults: {
     openrouterApiKey: '',
@@ -39,14 +61,448 @@ const store = new Store<SettingsStore>({
 });
 
 // ============================================================================
-// PROVIDER CONFIGURATION
+// SECURITY CONSTANTS
 // ============================================================================
 
 /**
- * Maps a model ID prefix to its provider configuration.
- * Both OpenRouter and Nvidia NIM expose OpenAI-compatible endpoints,
- * so the request format is identical — only the base URL and auth header differ.
+ * Working directory for all file operations.
+ * All paths are resolved relative to this directory.
+ * Change this to your project root.
  */
+const WORKSPACE_DIR = process.env.WORKSPACE_DIR || process.cwd();
+
+/**
+ * Maximum number of agentic loop iterations to prevent infinite loops.
+ */
+const MAX_ITERATIONS = 20;
+
+/**
+ * Blocked commands that should never be executed for safety.
+ */
+const BLOCKED_COMMANDS = [
+  'rm -rf /',
+  'rm -rf /*',
+  'mkfs',
+  'dd if=',
+  'format',
+  ':(){:|:&};:',
+  'chmod -R 777 /',
+  'chown -R',
+  '> /dev/sda',
+];
+
+// ============================================================================
+// TOOL DEFINITIONS (OpenAI-compatible format)
+// ============================================================================
+
+/**
+ * Tool definitions sent to the LLM.
+ * These tell the model what actions it can take.
+ */
+const TOOL_DEFINITIONS = [
+  {
+    type: 'function',
+    function: {
+      name: 'write_file',
+      description: 'Write content to a file. Creates the file if it does not exist, overwrites if it does. Creates parent directories automatically.',
+      parameters: {
+        type: 'object',
+        properties: {
+          file_path: {
+            type: 'string',
+            description: 'Path to the file (relative to workspace or absolute)',
+          },
+          content: {
+            type: 'string',
+            description: 'The content to write to the file',
+          },
+        },
+        required: ['file_path', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: 'Read the contents of a file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          file_path: {
+            type: 'string',
+            description: 'Path to the file (relative to workspace or absolute)',
+          },
+        },
+        required: ['file_path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_command',
+      description: 'Execute a terminal/shell command. Returns stdout and stderr. Use this to install packages, run builds, start servers, run tests, etc.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: {
+            type: 'string',
+            description: 'The shell command to execute',
+          },
+          cwd: {
+            type: 'string',
+            description: 'Working directory for the command (optional, defaults to workspace)',
+          },
+        },
+        required: ['command'],
+      },
+    },
+  },
+];
+
+// ============================================================================
+// SYSTEM PROMPT
+// ============================================================================
+
+/**
+ * System prompt that forces the model to use tools for autonomous coding.
+ */
+const SYSTEM_PROMPT = `You are FreebuffCC, an autonomous AI coding assistant. You have access to tools that let you interact with the user's filesystem and terminal.
+
+YOUR JOB: When the user asks you to build, create, fix, or modify software, you MUST use your tools to actually do the work. Do NOT just output plans or code blocks — actually execute them.
+
+HOW TO WORK:
+1. Analyze what the user wants.
+2. Break it into concrete steps.
+3. Execute each step using your tools (write_file, read_file, run_command).
+4. After each action, check the result and continue.
+5. When everything is done, give the user a summary.
+
+RULES:
+- ALWAYS use write_file to create files. Never just show code.
+- ALWAYS use run_command to install dependencies, run builds, and execute commands.
+- Use read_file to check existing files before modifying them.
+- Create files in a logical order (dependencies first).
+- After writing all files, run the appropriate commands to verify everything works.
+- If a command fails, read the error output and fix the issue.
+- Be thorough — complete the entire task before stopping.
+- When using run_command, prefer short, focused commands over long chains.
+- Your workspace is: ${WORKSPACE_DIR}
+
+IMPORTANT: You MUST call tools. Do NOT output code blocks as your response. Use write_file to create files, and run_command to execute them.`;
+
+// ============================================================================
+// TOOL EXECUTION FUNCTIONS
+// ============================================================================
+
+/**
+ * Resolves a file path relative to the workspace directory.
+ */
+function resolvePath(filePath: string): string {
+  if (isAbsolute(filePath)) {
+    return resolve(filePath);
+  }
+  return resolve(WORKSPACE_DIR, filePath);
+}
+
+/**
+ * Validates that a path is within the workspace (security check).
+ */
+function isPathSafe(filePath: string): boolean {
+  const resolved = resolvePath(filePath);
+  const workspace = resolve(WORKSPACE_DIR);
+  return resolved.startsWith(workspace);
+}
+
+/**
+ * Executes the write_file tool.
+ */
+async function executeWriteFile(args: { file_path: string; content: string }): Promise<string> {
+  const { file_path, content } = args;
+  
+  if (!isPathSafe(file_path)) {
+    return `ERROR: Path "${file_path}" is outside the workspace. Use a relative path or a path within ${WORKSPACE_DIR}.`;
+  }
+
+  const fullPath = resolvePath(file_path);
+
+  try {
+    // Create parent directories if they don't exist
+    await mkdir(dirname(fullPath), { recursive: true });
+    
+    // Write the file
+    await writeFile(fullPath, content, 'utf-8');
+    
+    const lines = content.split('\n').length;
+    const bytes = Buffer.byteLength(content, 'utf-8');
+    return `SUCCESS: Wrote ${lines} lines (${bytes} bytes) to ${file_path}`;
+  } catch (err: any) {
+    return `ERROR writing file: ${err.message}`;
+  }
+}
+
+/**
+ * Executes the read_file tool.
+ */
+async function executeReadFile(args: { file_path: string }): Promise<string> {
+  const { file_path } = args;
+  
+  if (!isPathSafe(file_path)) {
+    return `ERROR: Path "${file_path}" is outside the workspace.`;
+  }
+
+  const fullPath = resolvePath(file_path);
+
+  try {
+    await access(fullPath);
+    const content = await readFile(fullPath, 'utf-8');
+    
+    // Truncate very large files to avoid token limits
+    if (content.length > 50000) {
+      return content.substring(0, 50000) + '\n\n... [truncated, file is ' + content.length + ' bytes total]';
+    }
+    
+    return content;
+  } catch (err: any) {
+    if (err.code === 'ENOENT') {
+      return `ERROR: File not found: ${file_path}`;
+    }
+    return `ERROR reading file: ${err.message}`;
+  }
+}
+
+/**
+ * Executes the run_command tool.
+ * Runs commands asynchronously with a timeout.
+ */
+async function executeRunCommand(args: { command: string; cwd?: string }): Promise<string> {
+  const { command, cwd } = args;
+
+  // Security: Check for blocked commands
+  const lowerCmd = command.toLowerCase().trim();
+  for (const blocked of BLOCKED_COMMANDS) {
+    if (lowerCmd.includes(blocked)) {
+      return `ERROR: Command blocked for safety: "${blocked}"`;
+    }
+  }
+
+  const workingDir = cwd ? resolvePath(cwd) : WORKSPACE_DIR;
+
+  try {
+    // Execute with a 60-second timeout
+    const { stdout, stderr } = await execAsync(command, {
+      cwd: workingDir,
+      timeout: 60000,
+      maxBuffer: 1024 * 1024, // 1MB buffer
+      env: { ...process.env, FORCE_COLOR: '0' }, // No color codes in output
+    });
+
+    let result = '';
+    if (stdout) result += stdout;
+    if (stderr) result += (result ? '\n--- STDERR ---\n' : '') + stderr;
+    
+    if (!result.trim()) {
+      result = '(command completed with no output)';
+    }
+
+    // Truncate very long output
+    if (result.length > 10000) {
+      result = result.substring(0, 10000) + '\n\n... [output truncated]';
+    }
+
+    return result;
+  } catch (err: any) {
+    let errorMsg = `COMMAND FAILED: ${err.message}`;
+    if (err.stdout) errorMsg += `\n--- STDOUT ---\n${err.stdout}`;
+    if (err.stderr) errorMsg += `\n--- STDERR ---\n${err.stderr}`;
+    
+    // Truncate error output
+    if (errorMsg.length > 10000) {
+      errorMsg = errorMsg.substring(0, 10000) + '\n\n... [error output truncated]';
+    }
+    
+    return errorMsg;
+  }
+}
+
+/**
+ * Dispatches a tool call to the appropriate execution function.
+ */
+async function executeTool(toolCall: ToolCall): Promise<string> {
+  const { name, arguments: argsStr } = toolCall.function;
+  
+  let args: any;
+  try {
+    args = JSON.parse(argsStr);
+  } catch {
+    return `ERROR: Failed to parse tool arguments: ${argsStr}`;
+  }
+
+  console.log(`[Agent] Executing tool: ${name}`);
+
+  switch (name) {
+    case 'write_file':
+      return executeWriteFile(args);
+    case 'read_file':
+      return executeReadFile(args);
+    case 'run_command':
+      return executeRunCommand(args);
+    default:
+      return `ERROR: Unknown tool "${name}"`;
+  }
+}
+
+// ============================================================================
+// AGENTIC LOOP
+// ============================================================================
+
+/**
+ * Calls the LLM API and returns the response.
+ */
+async function callLLM(
+  baseUrl: string,
+  apiKey: string,
+  authPrefix: string,
+  model: string,
+  messages: ChatMessage[],
+  tools?: any[],
+): Promise<any> {
+  const body: any = {
+    model,
+    messages,
+    max_tokens: 4096,
+    temperature: 0.3, // Lower temperature for more deterministic tool use
+  };
+
+  if (tools && tools.length > 0) {
+    body.tools = tools;
+    body.tool_choice = 'auto'; // Let the model decide when to use tools
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `${authPrefix}${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => 'Unknown error');
+      throw new Error(`API returned ${response.status}: ${errBody}`);
+    }
+
+    return await response.json();
+  } catch (err: any) {
+    clearTimeout(timeout);
+    throw err;
+  }
+}
+
+/**
+ * The agentic loop:
+ * 1. Sends user prompt + tools to the LLM
+ * 2. If the LLM returns tool_calls, execute them
+ * 3. Append results as tool messages
+ * 4. Send back to the LLM
+ * 5. Repeat until the LLM returns a final text response
+ * 
+ * Returns an array of all messages including tool executions.
+ */
+async function agenticLoop(
+  baseUrl: string,
+  apiKey: string,
+  authPrefix: string,
+  model: string,
+  userMessages: ChatMessage[],
+  onToolExecution?: (toolName: string, result: string) => void,
+): Promise<{ messages: ChatMessage[]; iterations: number }> {
+  // Start with system prompt + user messages
+  const messages: ChatMessage[] = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    ...userMessages,
+  ];
+
+  let iterations = 0;
+
+  while (iterations < MAX_ITERATIONS) {
+    iterations++;
+    console.log(`[Agent] Iteration ${iterations}/${MAX_ITERATIONS}`);
+
+    // Call the LLM with tools
+    const response = await callLLM(baseUrl, apiKey, authPrefix, model, messages, TOOL_DEFINITIONS);
+    const choice = response.choices?.[0];
+
+    if (!choice) {
+      throw new Error('No response from LLM');
+    }
+
+    const assistantMessage = choice.message;
+
+    // Add the assistant's response to the conversation
+    messages.push({
+      role: 'assistant',
+      content: assistantMessage.content,
+      tool_calls: assistantMessage.tool_calls,
+    });
+
+    // If no tool calls, we're done — return the final response
+    if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+      console.log(`[Agent] Completed after ${iterations} iterations`);
+      return { messages, iterations };
+    }
+
+    // Execute each tool call and append results
+    for (const toolCall of assistantMessage.tool_calls) {
+      console.log(`[Agent] Tool call: ${toolCall.function.name}`);
+
+      const result = await executeTool(toolCall);
+
+      // Notify callback if provided
+      if (onToolExecution) {
+        onToolExecution(toolCall.function.name, result);
+      }
+
+      // Append the tool result as a tool role message
+      messages.push({
+        role: 'tool',
+        content: result,
+        tool_call_id: toolCall.id,
+      });
+    }
+  }
+
+  // If we hit the iteration limit, add a warning
+  messages.push({
+    role: 'system',
+    content: `[System: Maximum iterations (${MAX_ITERATIONS}) reached. Please provide your final answer based on the work done so far.]`,
+  });
+
+  // One final call to get the summary
+  const finalResponse = await callLLM(baseUrl, apiKey, authPrefix, model, messages);
+  const finalChoice = finalResponse.choices?.[0];
+  if (finalChoice?.message) {
+    messages.push({
+      role: 'assistant',
+      content: finalChoice.message.content,
+    });
+  }
+
+  return { messages, iterations };
+}
+
+// ============================================================================
+// PROVIDER CONFIGURATION
+// ============================================================================
+
 const PROVIDERS: Record<string, { baseUrl: string; getApiKey: () => string; authPrefix: string }> = {
   openrouter: {
     baseUrl: 'https://openrouter.ai/api/v1',
@@ -60,21 +516,12 @@ const PROVIDERS: Record<string, { baseUrl: string; getApiKey: () => string; auth
   },
 };
 
-/**
- * Determines which provider a model belongs to based on its ID.
- * OpenRouter models use slash-separated IDs (e.g., "openai/gpt-4").
- * Nvidia NIM models typically use org/model format (e.g., "nvidia/llama-3.1-70b").
- */
 function detectProvider(modelId: string): string {
   const lower = modelId.toLowerCase();
-
-  // Nvidia NIM models are detected by known org prefixes
   const nvidiaPrefixes = ['nvidia', 'meta/', 'mistralai/', 'google/', 'microsoft/', 'ibm/', 'databricks/', 'baai/'];
   for (const prefix of nvidiaPrefixes) {
     if (lower.startsWith(prefix)) return 'nvidia_nim';
   }
-
-  // Everything else goes to OpenRouter (which handles thousands of models)
   return 'openrouter';
 }
 
@@ -82,17 +529,12 @@ function detectProvider(modelId: string): string {
 // EXPRESS APP FACTORY
 // ============================================================================
 
-/**
- * Creates and configures the Express application.
- * Called once by the Electron main process.
- */
 export function startExpressApp(): express.Express {
   const app = express();
 
-  // Parse JSON bodies (up to 10MB for large message histories)
   app.use(express.json({ limit: '10mb' }));
 
-  // CORS — allow the renderer to call this local server
+  // CORS
   app.use((_req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -103,18 +545,15 @@ export function startExpressApp(): express.Express {
 
   // --------------------------------------------------------------------------
   // GET /api/models
-  // Fetches available models from OpenRouter.
-  // Nvidia NIM models are hardcoded (their catalog requires auth to list).
   // --------------------------------------------------------------------------
   app.get('/api/models', async (_req: Request, res: Response) => {
     const models: Array<{ id: string; name: string; provider: string; description?: string }> = [];
 
-    // --- Fetch OpenRouter models ---
     const orKey = store.get('openrouterApiKey');
     if (orKey) {
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15 * 1000);
+        const timeout = setTimeout(() => controller.abort(), 15000);
         const response = await fetch('https://openrouter.ai/api/v1/models', {
           headers: { Authorization: `Bearer ${orKey}` },
           signal: controller.signal,
@@ -123,12 +562,7 @@ export function startExpressApp(): express.Express {
         if (response.ok) {
           const data = await response.json() as any;
           for (const m of data.data || []) {
-            models.push({
-              id: m.id,
-              name: m.name || m.id,
-              provider: 'openrouter',
-              description: m.description,
-            });
+            models.push({ id: m.id, name: m.name || m.id, provider: 'openrouter', description: m.description });
           }
         }
       } catch (err) {
@@ -136,7 +570,6 @@ export function startExpressApp(): express.Express {
       }
     }
 
-    // --- Nvidia NIM models (curated list of popular free models) ---
     const nimKey = store.get('nvidiaNimApiKey');
     if (nimKey) {
       const nimModels = [
@@ -149,9 +582,6 @@ export function startExpressApp(): express.Express {
         { id: 'mistralai/mixtral-8x22b-instruct-v0.1', name: 'Mixtral 8x22B' },
         { id: 'google/gemma-2-27b-it', name: 'Gemma 2 27B' },
         { id: 'microsoft/phi-3-mini-128k-instruct', name: 'Phi-3 Mini' },
-        { id: 'ibm/granite-8b-code-instruct-12k', name: 'Granite 8B Code' },
-        { id: 'databricks/dbrx-instruct', name: 'DBRX Instruct' },
-        { id: 'baai/bge-m3', name: 'BGE M3 Embedding' },
       ];
       for (const m of nimModels) {
         models.push({ id: m.id, name: m.name, provider: 'nvidia_nim' });
@@ -162,9 +592,7 @@ export function startExpressApp(): express.Express {
   });
 
   // --------------------------------------------------------------------------
-  // POST /api/chat/completions
-  // Proxies a chat completion request to the appropriate provider.
-  // Request body: { model, messages, max_tokens?, temperature?, stream? }
+  // POST /api/chat/completions — Standard chat (no agent loop)
   // --------------------------------------------------------------------------
   app.post('/api/chat/completions', async (req: Request, res: Response) => {
     const { model, messages, max_tokens, temperature, stream } = req.body;
@@ -173,19 +601,15 @@ export function startExpressApp(): express.Express {
       return res.status(400).json({ error: 'model and messages are required' });
     }
 
-    // Determine provider and get config
     const providerKey = detectProvider(model);
     const provider = PROVIDERS[providerKey];
     const apiKey = provider.getApiKey();
 
     if (!apiKey) {
-      return res.status(400).json({
-        error: `No API key configured for ${providerKey}. Add it in Settings.`,
-      });
+      return res.status(400).json({ error: `No API key for ${providerKey}. Add it in Settings.` });
     }
 
-    // Build the upstream request body (OpenAI-compatible format)
-    const upstreamBody = {
+    const upstreamBody: any = {
       model,
       messages,
       max_tokens: max_tokens || 4096,
@@ -196,7 +620,6 @@ export function startExpressApp(): express.Express {
     console.log(`[Proxy] ${providerKey} → ${model}`);
 
     try {
-      // 5 minute timeout for long generation
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
@@ -211,14 +634,10 @@ export function startExpressApp(): express.Express {
       });
       clearTimeout(timeout);
 
-      // Stream the response back if requested
       if (stream) {
-        // Check upstream responded OK before streaming
         if (!response.ok) {
           const errBody = await response.text().catch(() => 'Unknown error');
-          return res.status(response.status).json({
-            error: `Provider returned ${response.status}: ${errBody}`,
-          });
+          return res.status(response.status).json({ error: `Provider error: ${errBody}` });
         }
 
         res.setHeader('Content-Type', 'text/event-stream');
@@ -226,9 +645,7 @@ export function startExpressApp(): express.Express {
         res.setHeader('Connection', 'keep-alive');
 
         const reader = response.body?.getReader();
-        if (!reader) {
-          return res.status(502).json({ error: 'No response body from provider' });
-        }
+        if (!reader) return res.status(502).json({ error: 'No response body' });
 
         const decoder = new TextDecoder();
         try {
@@ -237,31 +654,30 @@ export function startExpressApp(): express.Express {
             if (done) break;
             res.write(decoder.decode(value, { stream: true }));
           }
-        } catch (streamErr: any) {
-          console.error('[Proxy] Stream interrupted:', streamErr.message);
+        } catch (err: any) {
+          console.error('[Proxy] Stream interrupted:', err.message);
         }
         res.end();
       } else {
-        // Non-streaming: forward the JSON response
         const data = await response.json();
         res.status(response.status).json(data);
       }
     } catch (err: any) {
-      const msg = err.name === 'AbortError' ? 'Request timed out (5 min limit)' : err.message;
-      console.error(`[Proxy] Error calling ${providerKey}:`, msg);
-      res.status(502).json({ error: `Provider error: ${msg}` });
+      const msg = err.name === 'AbortError' ? 'Request timed out' : err.message;
+      console.error(`[Proxy] Error:`, msg);
+      res.status(502).json({ error: msg });
     }
   });
 
   // --------------------------------------------------------------------------
-  // POST /api/test-model
-  // Quick test: sends "Say hello" and checks for a valid response.
+  // POST /api/agent — Agentic tool execution loop
+  // This is the main endpoint for autonomous coding tasks.
   // --------------------------------------------------------------------------
-  app.post('/api/test-model', async (req: Request, res: Response) => {
-    const { model } = req.body;
+  app.post('/api/agent', async (req: Request, res: Response) => {
+    const { model, messages } = req.body;
 
-    if (!model) {
-      return res.status(400).json({ error: 'model is required' });
+    if (!model || !messages) {
+      return res.status(400).json({ error: 'model and messages are required' });
     }
 
     const providerKey = detectProvider(model);
@@ -269,12 +685,68 @@ export function startExpressApp(): express.Express {
     const apiKey = provider.getApiKey();
 
     if (!apiKey) {
-      return res.json({ success: false, error: `No API key for ${providerKey}` });
+      return res.status(400).json({ error: `No API key for ${providerKey}. Add it in Settings.` });
     }
+
+    console.log(`[Agent] Starting agentic loop: ${providerKey} → ${model}`);
+
+    try {
+      // Track tool executions for the response
+      const toolExecutions: Array<{ tool: string; result: string }> = [];
+
+      const { messages: resultMessages, iterations } = await agenticLoop(
+        provider.baseUrl,
+        apiKey,
+        provider.authPrefix,
+        model,
+        messages,
+        (toolName, result) => {
+          toolExecutions.push({ tool: toolName, result });
+          console.log(`[Agent] ${toolName} → ${result.substring(0, 100)}...`);
+        },
+      );
+
+      // Extract the final assistant response
+      const lastAssistant = resultMessages
+        .filter(m => m.role === 'assistant' && m.content)
+        .pop();
+
+      res.json({
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: lastAssistant?.content || 'Task completed.',
+          },
+          finish_reason: 'stop',
+        }],
+        // Include metadata about the agentic loop
+        agent_metadata: {
+          iterations,
+          tool_executions: toolExecutions,
+          total_tool_calls: toolExecutions.length,
+        },
+      });
+    } catch (err: any) {
+      console.error('[Agent] Error:', err.message);
+      res.status(500).json({ error: `Agent error: ${err.message}` });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // POST /api/test-model
+  // --------------------------------------------------------------------------
+  app.post('/api/test-model', async (req: Request, res: Response) => {
+    const { model } = req.body;
+    if (!model) return res.status(400).json({ error: 'model is required' });
+
+    const providerKey = detectProvider(model);
+    const provider = PROVIDERS[providerKey];
+    const apiKey = provider.getApiKey();
+    if (!apiKey) return res.json({ success: false, error: `No API key for ${providerKey}` });
 
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30 * 1000); // 30s for test
+      const timeout = setTimeout(() => controller.abort(), 30000);
 
       const response = await fetch(`${provider.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -299,16 +771,15 @@ export function startExpressApp(): express.Express {
       if (content && content.trim().length > 0) {
         res.json({ success: true, response: content.trim() });
       } else {
-        res.json({ success: false, error: data.error?.message || 'No content in response' });
+        res.json({ success: false, error: data.error?.message || 'No content' });
       }
     } catch (err: any) {
-      const msg = err.name === 'AbortError' ? 'Test timed out' : err.message;
-      res.json({ success: false, error: msg });
+      res.json({ success: false, error: err.name === 'AbortError' ? 'Timeout' : err.message });
     }
   });
 
   // --------------------------------------------------------------------------
-  // GET /api/settings (read-only — just to verify keys are set)
+  // GET /api/settings/status
   // --------------------------------------------------------------------------
   app.get('/api/settings/status', (_req: Request, res: Response) => {
     res.json({
