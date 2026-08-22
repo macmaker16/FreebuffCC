@@ -32,6 +32,7 @@ const PROVIDER_TABS: Record<string, { label: string; color: string }> = {
   together: { label: 'Together', color: 'pink' },
   mistral: { label: 'Mistral', color: 'red' },
   cohere: { label: 'Cohere', color: 'teal' },
+  local_llm: { label: 'Local', color: 'green' },
 };
 
 export default function ModelManager({

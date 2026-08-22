@@ -39,6 +39,8 @@ interface SettingsStore {
   togetherApiKey: string;
   mistralApiKey: string;
   cohereApiKey: string;
+  localLlmEndpoint: string;
+  localLlmApiKey: string;
   workspace: string;
 }
 
@@ -75,6 +77,8 @@ const store = new Store<SettingsStore>({
     togetherApiKey: '',
     mistralApiKey: '',
     cohereApiKey: '',
+    localLlmEndpoint: 'http://localhost:11434/v1',
+    localLlmApiKey: 'ollama',
     workspace: '',
   },
 });
@@ -530,7 +534,9 @@ async function agenticLoop(
 // PROVIDER CONFIGURATION
 // ============================================================================
 
-const PROVIDERS: Record<string, { baseUrl: string; getApiKey: () => string; authPrefix: string; modelsUrl?: string }> = {
+type ProviderConfig = { baseUrl: string | (() => string); getApiKey: () => string; authPrefix: string; };
+function getBaseUrl(p: ProviderConfig): string { return typeof p.baseUrl === 'function' ? p.baseUrl() : p.baseUrl; }
+const PROVIDERS: Record<string, ProviderConfig> = {
   openrouter: {
     baseUrl: 'https://openrouter.ai/api/v1',
     getApiKey: () => store.get('openrouterApiKey'),
@@ -579,6 +585,11 @@ const PROVIDERS: Record<string, { baseUrl: string; getApiKey: () => string; auth
   cohere: {
     baseUrl: 'https://api.cohere.com/v2',
     getApiKey: () => store.get('cohereApiKey'),
+    authPrefix: 'Bearer ',
+  },
+  local_llm: {
+    baseUrl: () => store.get('localLlmEndpoint') || 'http://localhost:11434/v1',
+    getApiKey: () => store.get('localLlmApiKey') || 'ollama',
     authPrefix: 'Bearer ',
   },
 };
@@ -762,6 +773,25 @@ export function startExpressApp(): express.Express {
       for (const id of cohModels) { models.push({ id, name: id, provider: 'cohere' }); }
     }
 
+    // Local LLM (Ollama, llama.cpp, LM Studio, vLLM, etc.)
+    const localEndpoint = store.get('localLlmEndpoint');
+    if (localEndpoint) {
+      try {
+        const c = new AbortController(); const t = setTimeout(() => c.abort(), 5000);
+        const r = await fetch(`${localEndpoint}/models`, {
+          headers: { Authorization: `Bearer ${store.get('localLlmApiKey') || 'ollama'}` },
+          signal: c.signal,
+        });
+        clearTimeout(t);
+        if (r.ok) {
+          const d = await r.json() as any;
+          for (const m of d.data || []) {
+            models.push({ id: m.id, name: m.id, provider: 'local_llm' });
+          }
+        }
+      } catch (err) { console.log('[Proxy] Local LLM not reachable:', (err as any).message); }
+    }
+
     res.json({ models });
   });
 
@@ -798,7 +828,7 @@ export function startExpressApp(): express.Express {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
-      const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+      const response = await fetch(`${getBaseUrl(provider)}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -869,7 +899,7 @@ export function startExpressApp(): express.Express {
       // Create and initialize the orchestrator
       const orchestrator = new Orchestrator({
         model,
-        baseUrl: provider.baseUrl,
+        baseUrl: getBaseUrl(provider),
         apiKey,
         authPrefix: provider.authPrefix,
         workspace: getWorkspaceDir(),
@@ -927,7 +957,7 @@ export function startExpressApp(): express.Express {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 30000);
 
-      const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+      const response = await fetch(`${getBaseUrl(provider)}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -972,6 +1002,7 @@ export function startExpressApp(): express.Express {
       together: !!store.get('togetherApiKey'),
       mistral: !!store.get('mistralApiKey'),
       cohere: !!store.get('cohereApiKey'),
+      local_llm: !!store.get('localLlmEndpoint'),
     });
   });
 

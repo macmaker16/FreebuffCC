@@ -127,7 +127,7 @@ function setupIPC(): void {
     shell.openExternal(url);
   });
 
-  const ALL_PROVIDER_KEYS = ['openrouterApiKey', 'nvidiaNimApiKey', 'openaiApiKey', 'anthropicApiKey', 'deepseekApiKey', 'geminiApiKey', 'groqApiKey', 'togetherApiKey', 'mistralApiKey', 'cohereApiKey'];
+  const ALL_PROVIDER_KEYS = ['openrouterApiKey', 'nvidiaNimApiKey', 'openaiApiKey', 'anthropicApiKey', 'deepseekApiKey', 'geminiApiKey', 'groqApiKey', 'togetherApiKey', 'mistralApiKey', 'cohereApiKey', 'localLlmEndpoint', 'localLlmApiKey'];
   const DEFAULTS: Record<string, string> = {};
   for (const k of ALL_PROVIDER_KEYS) DEFAULTS[k] = '';
   DEFAULTS['workspace'] = '';
