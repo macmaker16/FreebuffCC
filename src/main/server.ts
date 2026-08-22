@@ -16,7 +16,8 @@
 
 import express, { Request, Response } from 'express';
 import Store from 'electron-store';
-import { exec, spawn } from 'child_process';
+import { Orchestrator } from './agent';
+import { exec } from 'child_process';
 import { readFile, writeFile, mkdir, access } from 'fs/promises';
 import { dirname, resolve, isAbsolute } from 'path';
 import { promisify } from 'util';
@@ -690,8 +691,8 @@ export function startExpressApp(): express.Express {
   });
 
   // --------------------------------------------------------------------------
-  // POST /api/agent — Agentic tool execution loop
-  // This is the main endpoint for autonomous coding tasks.
+  // POST /api/agent — Master Orchestrator endpoint
+  // Integrates plugins, MCP, skills, and memory.
   // --------------------------------------------------------------------------
   app.post('/api/agent', async (req: Request, res: Response) => {
     const { model, messages } = req.body;
@@ -708,46 +709,49 @@ export function startExpressApp(): express.Express {
       return res.status(400).json({ error: `No API key for ${providerKey}. Add it in Settings.` });
     }
 
-    console.log(`[Agent] Starting agentic loop: ${providerKey} → ${model}`);
+    console.log(`[Orchestrator] Starting: ${providerKey} → ${model}`);
 
     try {
-      // Track tool executions for the response
-      const toolExecutions: Array<{ tool: string; result: string }> = [];
-
-      const { messages: resultMessages, iterations } = await agenticLoop(
-        provider.baseUrl,
-        apiKey,
-        provider.authPrefix,
+      // Create and initialize the orchestrator
+      const orchestrator = new Orchestrator({
         model,
-        messages,
-        (toolName, result) => {
-          toolExecutions.push({ tool: toolName, result });
-          console.log(`[Agent] ${toolName} → ${result.substring(0, 100)}...`);
-        },
-      );
+        baseUrl: provider.baseUrl,
+        apiKey,
+        authPrefix: provider.authPrefix,
+        workspace: getWorkspaceDir(),
+        maxIterations: 20,
+        enableMemory: true,
+        enableMCP: false, // Enable when MCP servers are configured
+      });
 
-      // Extract the final assistant response
-      const lastAssistant = resultMessages
-        .filter(m => m.role === 'assistant' && m.content)
-        .pop();
+      await orchestrator.init();
+
+      // Execute the agent task
+      const result = await orchestrator.execute(messages);
+
+      // Shutdown orchestrator
+      await orchestrator.shutdown();
 
       res.json({
         choices: [{
           message: {
             role: 'assistant',
-            content: lastAssistant?.content || 'Task completed.',
+            content: result.messages
+              .filter(m => m.role === 'assistant' && m.content)
+              .pop()?.content || 'Task completed.',
           },
           finish_reason: 'stop',
         }],
-        // Include metadata about the agentic loop
         agent_metadata: {
-          iterations,
-          tool_executions: toolExecutions,
-          total_tool_calls: toolExecutions.length,
+          iterations: result.iterations,
+          tool_executions: result.toolExecutions,
+          total_tool_calls: result.toolExecutions.length,
+          memory_entries: result.memoryEntries.length,
+          plugins: ['memory'],
         },
       });
     } catch (err: any) {
-      console.error('[Agent] Error:', err.message);
+      console.error('[Orchestrator] Error:', err.message);
       res.status(500).json({ error: `Agent error: ${err.message}` });
     }
   });
