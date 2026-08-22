@@ -1,5 +1,5 @@
 /**
- * FreebuffCC - API Service
+ * Michaelangelo - API Service
  * 
  * All communication with the Express proxy goes through this module.
  * The Express server port is obtained from the Electron main process

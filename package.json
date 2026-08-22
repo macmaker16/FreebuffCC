@@ -1,7 +1,7 @@
 {
-  "name": "freebuffcc",
+  "name": "michaelangelo",
   "version": "1.0.0",
-  "description": "FreebuffCC - Free AI Coding Agent with OpenRouter/NIM Proxy",
+  "description": "Michaelangelo - Free AI Coding Agent with OpenRouter/NIM Proxy",
   "main": "dist/main/main.js",
   "author": "macmaker16",
   "license": "MIT",
@@ -37,8 +37,8 @@
     "vite": "^5.0.0"
   },
   "build": {
-    "appId": "com.macmaker16.freebuffcc",
-    "productName": "FreebuffCC",
+    "appId": "com.macmaker16.michaelangelo",
+    "productName": "Michaelangelo",
     "directories": { "output": "release" },
     "files": ["dist/**/*", "assets/**/*"],
     "win": {
@@ -46,7 +46,7 @@
       "icon": "assets/icon.ico"
     },
     "portable": {
-      "artifactName": "FreebuffCC.exe"
+      "artifactName": "Michaelangelo.exe"
     }
   }
 }

@@ -1,5 +1,5 @@
 /**
- * FreebuffCC - Model Manager Component
+ * Michaelangelo - Model Manager Component
  * 
  * Displays models grouped by provider (OpenRouter / Nvidia NIM).
  * Each model card has a Test button and a Select button.

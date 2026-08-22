@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - Memory Store
+ * Michaelangelo Agent System - Memory Store
  * 
  * In-memory storage for session observations and summaries.
  * In production, this would be backed by SQLite or a vector database.

@@ -1,5 +1,5 @@
 /**
- * FreebuffCC - Settings View Component
+ * Michaelangelo - Settings View Component
  * 
  * Form for entering and saving OpenRouter and Nvidia NIM API keys.
  * Keys are persisted via electron-store and read by the Express proxy.

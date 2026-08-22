@@ -1,6 +1,6 @@
-# Contributing to FreebuffCC
+# Contributing to Michaelangelo
 
-Thank you for your interest in contributing to FreebuffCC! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to Michaelangelo! This document provides guidelines and instructions for contributing.
 
 ## Getting Started
 
@@ -15,8 +15,8 @@ Thank you for your interest in contributing to FreebuffCC! This document provide
 1. Fork the repository on GitHub
 2. Clone your fork:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/FreebuffCC.git
-   cd FreebuffCC
+   git clone https://github.com/YOUR_USERNAME/Michaelangelo.git
+   cd Michaelangelo
    ```
 3. Install dependencies:
    ```bash
@@ -30,7 +30,7 @@ Thank you for your interest in contributing to FreebuffCC! This document provide
 ## Project Structure
 
 ```
-FreebuffCC/
+Michaelangelo/
 ├── src/
 │   ├── main/                    # Electron main process
 │   │   ├── main.ts             # App entry, window, IPC

@@ -1,5 +1,5 @@
 /**
- * FreebuffCC - Main App Component
+ * Michaelangelo - Main App Component
  * 
  * Root component providing sidebar navigation and view switching.
  * Initializes the API service on mount.
@@ -45,7 +45,7 @@ function App() {
     <div className="flex h-screen bg-dark-950 text-white overflow-hidden">
       {/* Title Bar */}
       <div className="fixed top-0 left-0 right-0 h-10 bg-dark-900 border-b border-dark-700 titlebar-drag z-50 flex items-center justify-center">
-        <span className="text-sm font-medium text-dark-200">FreebuffCC</span>
+        <span className="text-sm font-medium text-dark-200">Michaelangelo</span>
       </div>
 
       {/* Sidebar */}
@@ -56,7 +56,7 @@ function App() {
               <Zap size={24} />
             </div>
             <div>
-              <h1 className="font-bold text-lg">FreebuffCC</h1>
+              <h1 className="font-bold text-lg">Michaelangelo</h1>
               <p className="text-xs text-dark-400">OpenRouter + NIM</p>
             </div>
           </div>

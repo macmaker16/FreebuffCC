@@ -1,5 +1,5 @@
 /**
- * FreebuffCC - Chat View Component
+ * Michaelangelo - Chat View Component
  * 
  * Main chat interface with streaming support.
  * Shows the active model/provider at the top.

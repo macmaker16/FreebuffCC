@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - Master Orchestrator
+ * Michaelangelo Agent System - Master Orchestrator
  * 
  * The central execution loop that integrates:
  * - Lifecycle hooks (plugins)
@@ -35,7 +35,7 @@ import { FileSystemSkill } from './skills/filesystem';
 import { MemorySearchSkill, setMemoryStore } from './skills/memory-search';
 
 /** System prompt for the agent */
-const AGENT_SYSTEM_PROMPT = `You are FreebuffCC, an autonomous AI coding assistant. You have access to tools that let you interact with the user's filesystem and terminal.
+const AGENT_SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant. You have access to tools that let you interact with the user's filesystem and terminal.
 
 YOUR JOB: When the user asks you to build, create, fix, or modify software, you MUST use your tools to actually do the work.
 

@@ -1,8 +1,8 @@
-# FreebuffCC
+# Michaelangelo
 
 A standalone Windows desktop application for interacting with AI models through OpenRouter and NVIDIA NIM APIs. Built with Electron, React, TypeScript, and an internal Express proxy server.
 
-[![CI](https://github.com/macmaker16/FreebuffCC/actions/workflows/ci.yml/badge.svg)](https://github.com/macmaker16/FreebuffCC/actions/workflows/ci.yml)
+[![CI](https://github.com/macmaker16/Michaelangelo/actions/workflows/ci.yml/badge.svg)](https://github.com/macmaker16/Michaelangelo/actions/workflows/ci.yml)
 ![Electron](https://img.shields.io/badge/Electron-28-47848f)
 ![React](https://img.shields.io/badge/React-18-61dafb)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)
@@ -10,13 +10,13 @@ A standalone Windows desktop application for interacting with AI models through 
 ![Express](https://img.shields.io/badge/Express-4-000000)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-[![Download](https://img.shields.io/badge/Download-FreebuffCC.exe-blue)](https://github.com/macmaker16/FreebuffCC/releases/latest)
+[![Download](https://img.shields.io/badge/Download-Michaelangelo.exe-blue)](https://github.com/macmaker16/Michaelangelo/releases/latest)
 
 ---
 
 ## Overview
 
-FreebuffCC is a local desktop client that acts as a secure proxy between you and AI model providers. Instead of sending API keys directly from a browser, all requests route through a lightweight Express server running inside the Electron app.
+Michaelangelo is a local desktop client that acts as a secure proxy between you and AI model providers. Instead of sending API keys directly from a browser, all requests route through a lightweight Express server running inside the Electron app.
 
 **Key benefits:**
 - Your API keys never leave your machine
@@ -53,7 +53,7 @@ FreebuffCC is a local desktop client that acts as a secure proxy between you and
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│                   FreebuffCC (Electron)               │
+│                   Michaelangelo (Electron)               │
 ├──────────────────────────────────────────────────────┤
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐          │
 │  │  Model   │  │   Chat   │  │ Settings │          │
@@ -110,8 +110,8 @@ FreebuffCC is a local desktop client that acts as a secure proxy between you and
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/macmaker16/FreebuffCC-v3.git
-cd FreebuffCC-v3
+git clone https://github.com/macmaker16/Michaelangelo.git
+cd Michaelangelo
 npm install
 ```
 
@@ -138,7 +138,7 @@ npm run build
 npm run package
 ```
 
-Output: `release/FreebuffCC.exe` (~70 MB, no installation needed)
+Output: `release/Michaelangelo.exe` (~70 MB, no installation needed)
 
 ---
 
@@ -146,7 +146,7 @@ Output: `release/FreebuffCC.exe` (~70 MB, no installation needed)
 
 ### Step 1: Configure API Keys
 
-1. Open FreebuffCC
+1. Open Michaelangelo
 2. Go to the **Settings** tab
 3. Enter your API key(s):
    - **OpenRouter**: Get a free key at [openrouter.ai/keys](https://openrouter.ai/keys)
@@ -173,7 +173,7 @@ Output: `release/FreebuffCC.exe` (~70 MB, no installation needed)
 ## Project Structure
 
 ```
-FreebuffCC-v3/
+Michaelangelo/
 ├── src/
 │   ├── main/                          # Electron main process
 │   │   ├── main.ts                    # App entry, window, IPC, server lifecycle

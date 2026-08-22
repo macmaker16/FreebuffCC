@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - Memory Search Skill
+ * Michaelangelo Agent System - Memory Search Skill
  * 
  * Provides 3-tier memory search capability:
  * - Layer 1: Index (titles and summaries)

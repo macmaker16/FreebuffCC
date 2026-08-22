@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - Skills Framework
+ * Michaelangelo Agent System - Skills Framework
  * 
  * Modular system for built-in capabilities.
  * Each skill exports tool definitions and execution functions.

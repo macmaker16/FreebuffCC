@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - Plugin Registry
+ * Michaelangelo Agent System - Plugin Registry
  * 
  * Central registry for managing plugins.
  * Provides methods to register, enable, disable, and list plugins.

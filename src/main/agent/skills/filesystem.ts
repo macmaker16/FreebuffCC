@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - FileSystem Skill
+ * Michaelangelo Agent System - FileSystem Skill
  * 
  * Provides file read/write capabilities.
  */

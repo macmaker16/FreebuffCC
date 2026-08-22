@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - Core Type Definitions
+ * Michaelangelo Agent System - Core Type Definitions
  * 
  * All interfaces and types used across the agent architecture.
  * This is the single source of truth for the agent's data model.

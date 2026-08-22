@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - Main Export
+ * Michaelangelo Agent System - Main Export
  * 
  * Re-exports all agent components for easy importing.
  */

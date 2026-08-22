@@ -1,5 +1,5 @@
 /**
- * FreebuffCC - Electron Main Process
+ * Michaelangelo - Electron Main Process
  * 
  * Responsibilities:
  * 1. Create and manage the Electron BrowserWindow
@@ -35,7 +35,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 1000,
     minHeight: 700,
-    title: 'FreebuffCC',
+    title: 'Michaelangelo',
     backgroundColor: '#101014',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -83,7 +83,7 @@ async function startInternalServer(): Promise<number> {
       const addr = expressServer!.address();
       if (addr && typeof addr === 'object') {
         serverPort = addr.port;
-        console.log(`[FreebuffCC] Express proxy running on port ${serverPort}`);
+        console.log(`[Michaelangelo] Express proxy running on port ${serverPort}`);
         resolve(serverPort);
       } else {
         reject(new Error('Failed to get server address'));
@@ -91,7 +91,7 @@ async function startInternalServer(): Promise<number> {
     });
 
     expressServer.on('error', (err) => {
-      console.error('[FreebuffCC] Express server error:', err);
+      console.error('[Michaelangelo] Express server error:', err);
       reject(err);
     });
   });
@@ -104,7 +104,7 @@ function stopInternalServer(): Promise<void> {
   return new Promise((resolve) => {
     if (expressServer) {
       expressServer.close(() => {
-        console.log('[FreebuffCC] Express proxy stopped');
+        console.log('[Michaelangelo] Express proxy stopped');
         expressServer = null;
         resolve();
       });

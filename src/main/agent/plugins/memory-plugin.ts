@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - Persistent Memory Plugin
+ * Michaelangelo Agent System - Persistent Memory Plugin
  * 
  * Automatically captures observations during tool use,
  * compresses session summaries on end, and injects context on start.

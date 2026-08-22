@@ -1,5 +1,5 @@
 /**
- * FreebuffCC - TypeScript Type Definitions
+ * Michaelangelo - TypeScript Type Definitions
  */
 
 /** A model fetched from OpenRouter or hardcoded for NIM */

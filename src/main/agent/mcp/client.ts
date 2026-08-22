@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - MCP Client Manager
+ * Michaelangelo Agent System - MCP Client Manager
  * 
  * Connects to external MCP servers via stdio or SSE,
  * discovers their tools, and routes tool calls to them.
@@ -57,7 +57,7 @@ export class MCPClientManager {
       await this.sendRequest(config.id, 'initialize', {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        clientInfo: { name: 'FreebuffCC', version: '1.0.0' },
+        clientInfo: { name: 'Michaelangelo', version: '1.0.0' },
       });
 
       // Notify initialized

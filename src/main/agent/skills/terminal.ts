@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - Terminal Skill
+ * Michaelangelo Agent System - Terminal Skill
  * 
  * Provides terminal/command execution capabilities.
  */

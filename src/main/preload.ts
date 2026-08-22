@@ -1,5 +1,5 @@
 /**
- * FreebuffCC - Preload Script
+ * Michaelangelo - Preload Script
  * 
  * Bridges the Electron main process and the React renderer.
  * Only safe, whitelisted methods are exposed to the frontend.

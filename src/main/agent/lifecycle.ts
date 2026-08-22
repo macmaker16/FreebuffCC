@@ -1,5 +1,5 @@
 /**
- * FreebuffCC Agent System - Lifecycle Manager
+ * Michaelangelo Agent System - Lifecycle Manager
  * 
  * Manages the execution of lifecycle hooks across all registered plugins.
  * Hooks fire in registration order. Errors in one plugin don't block others.

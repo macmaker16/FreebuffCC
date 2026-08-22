@@ -1,5 +1,5 @@
 /**
- * FreebuffCC - Express Proxy Server with Agentic Tool Execution
+ * Michaelangelo - Express Proxy Server with Agentic Tool Execution
  * 
  * This server:
  * 1. Proxies chat requests to OpenRouter or Nvidia NIM
@@ -172,7 +172,7 @@ const TOOL_DEFINITIONS = [
 /**
  * System prompt that forces the model to use tools for autonomous coding.
  */
-const SYSTEM_PROMPT = `You are FreebuffCC, an autonomous AI coding assistant. You have access to tools that let you interact with the user's filesystem and terminal.
+const SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant. You have access to tools that let you interact with the user's filesystem and terminal.
 
 YOUR JOB: When the user asks you to build, create, fix, or modify software, you MUST use your tools to actually do the work. Do NOT just output plans or code blocks — actually execute them.
 
