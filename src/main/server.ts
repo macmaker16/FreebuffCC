@@ -595,8 +595,15 @@ export function startExpressApp(): express.Express {
         if (response.ok) {
           const data = await response.json() as any;
           for (const m of data.data || []) {
-            // Skip embedding and non-chat models
-            if (m.id.includes('embed') || m.id.includes('vision') || m.id.includes('safety') || m.id.includes('parse') || m.id.includes('translate')) continue;
+            // Only include chat-capable instruct models from NIM
+            // Skip embedding, code completion, reranking, vision, safety, parse, translate, guard, steer models
+            const id = m.id.toLowerCase();
+            if (id.includes('embed') || id.includes('vision') || id.includes('safety') ||
+                id.includes('parse') || id.includes('translate') || id.includes('rerank') ||
+                id.includes('guard') || id.includes('steer') || id.includes('coder') ||
+                id.includes('snowflake') || id.includes('arctic') || id.includes('cosmo')) continue;
+            // Only keep models with 'instruct' or 'chat' in the name — these are the ones that actually work for chat
+            if (!id.includes('instruct') && !id.includes('chat')) continue;
             models.push({
               id: m.id,
               name: m.id.split('/').pop() || m.id,
@@ -616,13 +623,14 @@ export function startExpressApp(): express.Express {
   // POST /api/chat/completions — Standard chat (no agent loop)
   // --------------------------------------------------------------------------
   app.post('/api/chat/completions', async (req: Request, res: Response) => {
-    const { model, messages, max_tokens, temperature, stream } = req.body;
+    const { model, messages, max_tokens, temperature, stream, provider: explicitProvider } = req.body;
 
     if (!model || !messages) {
       return res.status(400).json({ error: 'model and messages are required' });
     }
 
-    const providerKey = detectProvider(model);
+    // Use explicit provider if provided, otherwise fall back to prefix detection
+    const providerKey = (explicitProvider && explicitProvider !== 'auto' && PROVIDERS[explicitProvider]) ? explicitProvider : detectProvider(model);
     const provider = PROVIDERS[providerKey];
     const apiKey = provider.getApiKey();
 
@@ -695,13 +703,13 @@ export function startExpressApp(): express.Express {
   // Integrates plugins, MCP, skills, and memory.
   // --------------------------------------------------------------------------
   app.post('/api/agent', async (req: Request, res: Response) => {
-    const { model, messages } = req.body;
+    const { model, messages, provider: explicitProvider } = req.body;
 
     if (!model || !messages) {
       return res.status(400).json({ error: 'model and messages are required' });
     }
 
-    const providerKey = detectProvider(model);
+    const providerKey = (explicitProvider && explicitProvider !== 'auto' && PROVIDERS[explicitProvider]) ? explicitProvider : detectProvider(model);
     const provider = PROVIDERS[providerKey];
     const apiKey = provider.getApiKey();
 
@@ -760,10 +768,11 @@ export function startExpressApp(): express.Express {
   // POST /api/test-model
   // --------------------------------------------------------------------------
   app.post('/api/test-model', async (req: Request, res: Response) => {
-    const { model } = req.body;
+    const { model, provider: explicitProvider } = req.body;
     if (!model) return res.status(400).json({ error: 'model is required' });
 
-    const providerKey = detectProvider(model);
+    // Use explicit provider if provided, otherwise fall back to prefix detection
+    const providerKey = (explicitProvider && explicitProvider !== 'auto' && PROVIDERS[explicitProvider]) ? explicitProvider : detectProvider(model);
     const provider = PROVIDERS[providerKey];
     const apiKey = provider.getApiKey();
     if (!apiKey) return res.json({ success: false, error: `No API key for ${providerKey}` });

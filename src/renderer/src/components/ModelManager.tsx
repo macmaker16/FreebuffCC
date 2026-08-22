@@ -44,8 +44,20 @@ export default function ModelManager({
       if (!g[m.provider]) g[m.provider] = [];
       g[m.provider].push(m);
     }
+    // Sort each provider group: active model first, then online, then offline/untested
+    for (const key of Object.keys(g)) {
+      g[key].sort((a, b) => {
+        if (activeModel?.id === a.id) return -1;
+        if (activeModel?.id === b.id) return 1;
+        const sa = modelStatuses.get(a.id);
+        const sb = modelStatuses.get(b.id);
+        const rankA = sa?.status === 'online' ? 0 : sa?.status === 'testing' ? 1 : 2;
+        const rankB = sb?.status === 'online' ? 0 : sb?.status === 'testing' ? 1 : 2;
+        return rankA - rankB;
+      });
+    }
     return g;
-  }, [filtered]);
+  }, [filtered, activeModel, modelStatuses]);
 
   const handleRefresh = async () => {
     setLoading(true);

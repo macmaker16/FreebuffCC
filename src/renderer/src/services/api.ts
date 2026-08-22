@@ -46,11 +46,11 @@ export async function fetchModels(): Promise<Model[]> {
  * Tests a model by sending a simple "Hello world" prompt.
  * Returns whether the model responded and the response text.
  */
-export async function testModel(modelId: string): Promise<{ success: boolean; response?: string; error?: string }> {
+export async function testModel(modelId: string, provider?: string): Promise<{ success: boolean; response?: string; error?: string }> {
   const res = await fetch(`${baseUrl()}/api/test-model`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: modelId }),
+    body: JSON.stringify({ model: modelId, provider: provider || 'auto' }),
   });
   if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
   return res.json();
@@ -67,6 +67,7 @@ export async function testModel(modelId: string): Promise<{ success: boolean; re
 export async function sendChat(
   messages: Array<{ role: string; content: string }>,
   model: string,
+  provider?: string,
   options: { maxTokens?: number; temperature?: number } = {}
 ): Promise<any> {
   const res = await fetch(`${baseUrl()}/api/chat/completions`, {
@@ -74,6 +75,7 @@ export async function sendChat(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model,
+      provider: provider || 'auto',
       messages,
       max_tokens: options.maxTokens || 4096,
       temperature: options.temperature ?? 0.7,

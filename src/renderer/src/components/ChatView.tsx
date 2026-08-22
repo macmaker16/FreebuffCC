@@ -56,7 +56,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
 
     try {
       const apiMessages = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }));
-      const res = await sendChat(apiMessages, activeModel.id);
+      const res = await sendChat(apiMessages, activeModel.id, activeModel.provider);
       const content = res.choices?.[0]?.message?.content || 'No response';
       const assistantMsg: ChatMessage = {
         id: generateId(), role: 'assistant', content, timestamp: Date.now(),

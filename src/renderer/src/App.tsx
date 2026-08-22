@@ -56,7 +56,7 @@ function App() {
       });
 
       try {
-        const result = await testModel(model.id);
+        const result = await testModel(model.id, model.provider);
         setModelStatuses(prev => {
           const next = new Map(prev);
           next.set(model.id, {
