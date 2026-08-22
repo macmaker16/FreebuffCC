@@ -90,6 +90,31 @@ export async function sendChat(
 }
 
 /**
+ * Sends a message to the agentic endpoint which has tool execution.
+ * The agent will autonomously create files, run commands, etc.
+ */
+export async function sendAgentMessage(
+  messages: Array<{ role: string; content: string }>,
+  model: string,
+  provider?: string,
+): Promise<any> {
+  const res = await fetch(`${baseUrl()}/api/agent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      provider: provider || 'auto',
+      messages,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Agent request failed');
+  }
+  return res.json();
+}
+
+/**
  * Streams a chat message. Returns a ReadableStream of SSE chunks.
  * The caller should parse each "data: ..." line as JSON.
  */

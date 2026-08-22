@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Bot, User, Trash2, AlertCircle, FolderOpen, Folder, Check, Wifi, WifiOff } from 'lucide-react';
 import { Model, ModelStatus, ChatMessage } from '../types';
-import { sendChat, generateId } from '../services/api';
+import { sendAgentMessage, generateId } from '../services/api';
 
 interface Props {
   activeModel: Model | null;
@@ -56,10 +56,15 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
 
     try {
       const apiMessages = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }));
-      const res = await sendChat(apiMessages, activeModel.id, activeModel.provider);
+      const res = await sendAgentMessage(apiMessages, activeModel.id, activeModel.provider);
       const content = res.choices?.[0]?.message?.content || 'No response';
+      const meta = res.agent_metadata;
+      let suffix = '';
+      if (meta && meta.total_tool_calls > 0) {
+        suffix = `\n\n_[${meta.total_tool_calls} tool calls, ${meta.iterations} iterations]_`;
+      }
       const assistantMsg: ChatMessage = {
-        id: generateId(), role: 'assistant', content, timestamp: Date.now(),
+        id: generateId(), role: 'assistant', content: content + suffix, timestamp: Date.now(),
       };
       setMessages(prev => [...prev, assistantMsg]);
     } catch (err: any) {
@@ -175,13 +180,14 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             {loading && (
               <div className="flex gap-2 justify-start">
                 <div className="w-5 h-5 rounded bg-brand-600/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Bot size={11} className="text-brand-400" />
+                  <Bot size={11} className="text-brand-400 animate-pulse" />
                 </div>
                 <div className="rounded-lg px-3 py-2 bg-dark-800">
+                  <p className="text-[10px] text-dark-400 mb-1">Agent working...</p>
                   <div className="flex gap-0.5">
-                    <div className="w-1.5 h-1.5 bg-dark-500 rounded-full typing-dot" />
-                    <div className="w-1.5 h-1.5 bg-dark-500 rounded-full typing-dot" />
-                    <div className="w-1.5 h-1.5 bg-dark-500 rounded-full typing-dot" />
+                    <div className="w-1.5 h-1.5 bg-brand-400 rounded-full typing-dot" />
+                    <div className="w-1.5 h-1.5 bg-brand-400 rounded-full typing-dot" />
+                    <div className="w-1.5 h-1.5 bg-brand-400 rounded-full typing-dot" />
                   </div>
                 </div>
               </div>
