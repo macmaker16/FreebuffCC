@@ -1,15 +1,10 @@
 /**
- * Michaelangelo Agent System - Skills Framework
- * 
- * Modular system for built-in capabilities.
- * Each skill exports tool definitions and execution functions.
+ * Michaelangelo Agent - Skills Framework
+ * Exports all built-in skills
  */
-
-import { AgentSkill, ExecutionContext, ToolResult } from '../types';
 
 export { TerminalSkill } from './terminal';
 export { FileSystemSkill } from './filesystem';
-export { MemorySearchSkill } from './memory-search';
-
-/** All built-in skills */
-export const BUILTIN_SKILLS: AgentSkill[] = [];
+export { GitSkill } from './git';
+export { MemorySearchSkill, setMemoryStore } from './memory-search';
+export { BUILTIN_SKILLS, detectSkillTrigger, expandSkillArgs } from './builtin-skills';

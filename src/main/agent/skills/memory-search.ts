@@ -1,18 +1,13 @@
 /**
- * Michaelangelo Agent System - Memory Search Skill
- * 
- * Provides 3-tier memory search capability:
- * - Layer 1: Index (titles and summaries)
- * - Layer 2: Timeline (chronological events)
- * - Layer 3: Full Details (complete content)
+ * Michaelangelo Agent - Memory Search Skill
+ * 3-tier search: Index, Timeline, Full Details
  */
 
-import { AgentSkill, ExecutionContext, ToolResult, MemoryEntry } from '../types';
+import { AgentSkill, ExecutionContext, ToolResult } from '../types';
+import { MemoryEntry } from '../memory/store';
 
-/** Reference to the memory store (injected at runtime) */
 let memoryStore: MemoryEntry[] = [];
 
-/** Set the memory store reference */
 export function setMemoryStore(store: MemoryEntry[]): void {
   memoryStore = store;
 }
@@ -25,17 +20,12 @@ export const MemorySearchSkill: AgentSkill = {
       type: 'function',
       function: {
         name: 'search_memory',
-        description: 'Search past session memories. Use layer 1 for quick index, layer 2 for timeline, layer 3 for full details.',
+        description: 'Search past session memories. Layer 1: index, Layer 2: timeline, Layer 3: full details.',
         parameters: {
           type: 'object',
           properties: {
             query: { type: 'string', description: 'Search query' },
-            layer: {
-              type: 'string',
-              enum: ['1', '2', '3'],
-              description: 'Search depth: 1=index, 2=timeline, 3=full details',
-            },
-            limit: { type: 'number', description: 'Max results (default 5)' },
+            layer: { type: 'number', description: 'Search depth: 1=index, 2=timeline, 3=full (default 1)' },
           },
           required: ['query'],
         },
@@ -43,69 +33,34 @@ export const MemorySearchSkill: AgentSkill = {
     },
   ],
 
-  async execute(toolName: string, args: Record<string, any>, ctx: ExecutionContext): Promise<ToolResult> {
+  async execute(toolName: string, args: Record<string, any>, _ctx: ExecutionContext): Promise<ToolResult> {
     if (toolName !== 'search_memory') {
       return { success: false, output: '', error: `Unknown tool: ${toolName}` };
     }
 
-    const { query, layer = '1', limit = 5 } = args;
-    const queryLower = query.toLowerCase();
-
-    // Filter entries by relevance (simple keyword matching)
-    const matches = memoryStore
-      .map(entry => ({
-        entry,
-        relevance: calculateRelevance(queryLower, entry),
-      }))
-      .filter(m => m.relevance > 0)
-      .sort((a, b) => b.relevance - a.relevance)
-      .slice(0, limit);
+    const { query, layer = 1 } = args;
+    const q = query.toLowerCase();
+    const matches = memoryStore.filter(e =>
+      e.content.toLowerCase().includes(q)
+    ).slice(-10);
 
     if (matches.length === 0) {
-      return { success: true, output: 'No matching memories found.' };
+      return { success: true, output: 'No relevant memories found.' };
     }
 
     let output = '';
-
     switch (layer) {
-      case '1': // Index layer — just titles and summaries
-        output = matches
-          .map(m => `[${m.entry.type}] ${m.entry.timestamp ? new Date(m.entry.timestamp).toISOString() : 'unknown'}: ${m.entry.content.substring(0, 100)}`)
-          .join('\n');
+      case 1:
+        output = matches.map((m, i) => `${i + 1}. [${m.type}] ${m.content.substring(0, 80)}...`).join('\n');
         break;
-
-      case '2': // Timeline layer — chronological with more detail
-        output = matches
-          .map(m => `---\nType: ${m.entry.type}\nSession: ${m.entry.sessionId}\nTime: ${m.entry.timestamp ? new Date(m.entry.timestamp).toISOString() : 'unknown'}\nContent: ${m.entry.content.substring(0, 500)}\n`)
-          .join('\n');
+      case 2:
+        output = matches.map(m => `[${new Date(m.timestamp).toISOString().split('T')[0]}] [${m.type}] ${m.content.substring(0, 200)}`).join('\n\n');
         break;
-
-      case '3': // Full details layer — complete content
-        output = matches
-          .map(m => `===\nType: ${m.entry.type}\nSession: ${m.entry.sessionId}\nTime: ${m.entry.timestamp ? new Date(m.entry.timestamp).toISOString() : 'unknown'}\nContent: ${m.entry.content}\nMetadata: ${JSON.stringify(m.entry.metadata)}\n===`)
-          .join('\n\n');
+      case 3:
+        output = matches.map(m => `---\nType: ${m.type}\nDate: ${new Date(m.timestamp).toISOString()}\n\n${m.content}\n`).join('\n');
         break;
-
-      default:
-        output = 'Invalid layer. Use 1, 2, or 3.';
     }
 
     return { success: true, output };
   },
 };
-
-/** Simple keyword-based relevance scoring */
-function calculateRelevance(query: string, entry: MemoryEntry): number {
-  const content = entry.content.toLowerCase();
-  const words = query.split(/\s+/);
-  let score = 0;
-
-  for (const word of words) {
-    if (content.includes(word)) score += 1;
-  }
-
-  // Boost summaries and learnings
-  if (entry.type === 'summary' || entry.type === 'learning') score += 0.5;
-
-  return score / words.length;
-}

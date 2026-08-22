@@ -1,15 +1,12 @@
 /**
- * Michaelangelo Agent System - Core Type Definitions
- * 
- * All interfaces and types used across the agent architecture.
- * This is the single source of truth for the agent's data model.
+ * Michaelangelo Agent System - Complete Type Definitions
+ * Claude Code-style architecture with 3-phase loop, MCP, sub-agents, skills
  */
 
 // ============================================================================
 // MESSAGE TYPES
 // ============================================================================
 
-/** OpenAI-compatible message format */
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content?: string | null;
@@ -18,17 +15,12 @@ export interface ChatMessage {
   name?: string;
 }
 
-/** A tool call returned by the LLM */
 export interface ToolCall {
   id: string;
   type: 'function';
-  function: {
-    name: string;
-    arguments: string;
-  };
+  function: { name: string; arguments: string };
 }
 
-/** OpenAI-compatible tool definition */
 export interface ToolDefinition {
   type: 'function';
   function: {
@@ -46,29 +38,53 @@ export interface ToolDefinition {
 // TOOL EXECUTION
 // ============================================================================
 
-/** Result of executing a tool */
 export interface ToolResult {
   success: boolean;
   output: string;
   error?: string;
   duration_ms?: number;
+  metadata?: Record<string, any>;
 }
 
-/** A tool that can be executed by the agent */
 export interface AgentTool {
   name: string;
   description: string;
   definition: ToolDefinition;
   execute: (args: Record<string, any>, context: ExecutionContext) => Promise<ToolResult>;
-  source: 'internal' | 'mcp' | 'plugin';
-  mcpServerId?: string; // For MCP tools, which server owns this tool
+  source: 'internal' | 'mcp' | 'plugin' | 'skill';
+  mcpServerId?: string;
+}
+
+// ============================================================================
+// SKILL SYSTEM
+// ============================================================================
+
+/** A skill is a package of repeatable workflows the model can invoke */
+export interface SkillDefinition {
+  name: string;
+  description: string;
+  trigger: string; // e.g. "/review-pr", "/deploy-staging"
+  steps: SkillStep[];
+  parameters: { name: string; type: string; description: string; required: boolean }[];
+}
+
+export interface SkillStep {
+  action: string; // tool name to call
+  args: Record<string, string>; // template args with {{param}} placeholders
+  description: string;
+}
+
+export interface AgentSkill {
+  name: string;
+  description: string;
+  tools: ToolDefinition[];
+  execute: (toolName: string, args: Record<string, any>, ctx: ExecutionContext) => Promise<ToolResult>;
 }
 
 // ============================================================================
 // EXECUTION CONTEXT
 // ============================================================================
 
-/** Context passed through the entire agent execution loop */
 export interface ExecutionContext {
   sessionId: string;
   workspace: string;
@@ -78,30 +94,47 @@ export interface ExecutionContext {
   maxIterations: number;
   tools: Map<string, AgentTool>;
   metadata: Record<string, any>;
+  /** Project instructions loaded from APP_INSTRUCTIONS.md */
+  projectInstructions?: string;
+  /** Abort signal for user interruption */
+  abortSignal?: AbortSignal;
 }
 
 // ============================================================================
-// PLUGIN SYSTEM
+// THREE-PHASE LOOP
 // ============================================================================
 
-/** Available lifecycle hooks */
+export type AgentPhase = 'gather_context' | 'take_action' | 'verify_results';
+
+export interface PhaseResult {
+  phase: AgentPhase;
+  toolCalls: ToolCall[];
+  toolResults: ToolResult[];
+  context?: string; // Gathered context for the phase
+  verified?: boolean; // For verify phase
+}
+
+// ============================================================================
+// LIFECYCLE HOOKS
+// ============================================================================
+
 export type LifecycleHook =
   | 'onSessionStart'
   | 'onUserPromptSubmit'
   | 'onPreToolUse'
   | 'onPostToolUse'
+  | 'onToolError'
+  | 'onPhaseComplete'
   | 'onSessionEnd';
 
-/** A plugin that hooks into the agent lifecycle */
 export interface AgentPlugin {
   name: string;
   description: string;
   version: string;
-  hooks: Partial<Record<LifecycleHook, (ctx: HookContext) => Promise<void>>>;
   enabled: boolean;
+  hooks: Partial<Record<LifecycleHook, (ctx: HookContext) => Promise<void>>>;
 }
 
-/** Context passed to lifecycle hooks */
 export interface HookContext {
   sessionId: string;
   workspace: string;
@@ -109,80 +142,13 @@ export interface HookContext {
   messages: ChatMessage[];
   toolCall?: ToolCall;
   toolResult?: ToolResult;
-  observation?: string;
   metadata: Record<string, any>;
 }
 
 // ============================================================================
-// MCP CLIENT
+// ORCHESTRATOR CONFIG
 // ============================================================================
 
-/** Configuration for connecting to an MCP server */
-export interface MCPServerConfig {
-  id: string;
-  name: string;
-  transport: 'stdio' | 'sse';
-  command?: string;      // For stdio: the command to run
-  args?: string[];       // For stdio: command arguments
-  url?: string;          // For SSE: the server URL
-  env?: Record<string, string>; // Environment variables
-}
-
-/** MCP server connection state */
-export interface MCPServerState {
-  id: string;
-  status: 'disconnected' | 'connecting' | 'connected' | 'error';
-  tools: ToolDefinition[];
-  error?: string;
-}
-
-// ============================================================================
-// MEMORY SYSTEM
-// ============================================================================
-
-/** A memory entry stored in the database */
-export interface MemoryEntry {
-  id: string;
-  sessionId: string;
-  timestamp: number;
-  type: 'observation' | 'summary' | 'learning' | 'task';
-  content: string;
-  metadata: Record<string, any>;
-}
-
-/** Search result from memory */
-export interface MemorySearchResult {
-  entry: MemoryEntry;
-  relevance: number; // 0-1 score
-}
-
-// ============================================================================
-// SKILL SYSTEM
-// ============================================================================
-
-/** A built-in skill that provides tools */
-export interface AgentSkill {
-  name: string;
-  description: string;
-  tools: ToolDefinition[];
-  execute: (toolName: string, args: Record<string, any>, ctx: ExecutionContext) => Promise<ToolResult>;
-}
-
-// ============================================================================
-// ORCHESTRATOR
-// ============================================================================
-
-/** Result of a complete agent execution */
-export interface OrchestratorResult {
-  success: boolean;
-  messages: ChatMessage[];
-  iterations: number;
-  toolExecutions: Array<{ tool: string; result: string; duration_ms: number }>;
-  memoryEntries: MemoryEntry[];
-  error?: string;
-}
-
-/** Configuration for the orchestrator */
 export interface OrchestratorConfig {
   model: string;
   baseUrl: string;
@@ -193,4 +159,55 @@ export interface OrchestratorConfig {
   enableMemory?: boolean;
   enableMCP?: boolean;
   mcpServers?: MCPServerConfig[];
+  /** Enable sub-agent spawning */
+  enableSubAgents?: boolean;
+  /** User abort signal for interruption */
+  abortSignal?: AbortSignal;
+}
+
+export interface OrchestratorResult {
+  messages: ChatMessage[];
+  iterations: number;
+  toolExecutions: { tool: string; result: string; duration_ms: number; phase: string }[];
+  memoryEntries: { key: string; value: string }[];
+  subAgentResults?: SubAgentResult[];
+}
+
+// ============================================================================
+// MCP CLIENT
+// ============================================================================
+
+export interface MCPServerConfig {
+  name: string;
+  transport: 'stdio' | 'sse';
+  command?: string; // For stdio transport
+  args?: string[];
+  url?: string; // For SSE transport
+  env?: Record<string, string>;
+}
+
+export interface MCPTool {
+  serverId: string;
+  function: ToolDefinition;
+}
+
+// ============================================================================
+// SUB-AGENTS
+// ============================================================================
+
+export interface SubAgentTask {
+  id: string;
+  description: string;
+  prompt: string;
+  workspace: string;
+  model: string;
+  parentSessionId: string;
+}
+
+export interface SubAgentResult {
+  taskId: string;
+  status: 'completed' | 'failed' | 'cancelled';
+  output: string;
+  toolExecutions: { tool: string; result: string }[];
+  duration_ms: number;
 }
