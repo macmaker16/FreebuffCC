@@ -25,8 +25,9 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-/** Server settings for API keys */
+/** Server settings for API keys and workspace */
 export interface Settings {
   openrouterApiKey: string;
   nvidiaNimApiKey: string;
+  workspace: string;
 }

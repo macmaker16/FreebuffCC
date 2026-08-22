@@ -8,7 +8,7 @@
  * 4. Expose IPC for settings management via electron-store
  */
 
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import * as path from 'path';
 import { createServer, Server } from 'http';
 import { startExpressApp } from './server';
@@ -141,10 +141,36 @@ function setupIPC(): void {
   /** Save API keys to electron-store (called from Settings view) */
   ipcMain.handle('set-api-keys', (_event, keys: { openrouterApiKey?: string; nvidiaNimApiKey?: string }) => {
     const Store = require('electron-store');
-    const store = new Store({ defaults: { openrouterApiKey: '', nvidiaNimApiKey: '' } });
+    const store = new Store({ defaults: { openrouterApiKey: '', nvidiaNimApiKey: '', workspace: '' } });
     if (keys.openrouterApiKey !== undefined) store.set('openrouterApiKey', keys.openrouterApiKey);
     if (keys.nvidiaNimApiKey !== undefined) store.set('nvidiaNimApiKey', keys.nvidiaNimApiKey);
     return { success: true };
+  });
+
+  /** Get the current workspace folder */
+  ipcMain.handle('get-workspace', () => {
+    const Store = require('electron-store');
+    const store = new Store({ defaults: { openrouterApiKey: '', nvidiaNimApiKey: '', workspace: '' } });
+    return store.get('workspace') || process.cwd();
+  });
+
+  /** Set the workspace folder */
+  ipcMain.handle('set-workspace', (_event, workspacePath: string) => {
+    const Store = require('electron-store');
+    const store = new Store({ defaults: { openrouterApiKey: '', nvidiaNimApiKey: '', workspace: '' } });
+    store.set('workspace', workspacePath);
+    return { success: true };
+  });
+
+  /** Open a native folder picker dialog */
+  ipcMain.handle('select-folder', async () => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: 'Select Workspace Folder',
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
   });
 }
 

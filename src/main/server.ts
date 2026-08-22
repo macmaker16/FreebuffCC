@@ -30,6 +30,7 @@ const execAsync = promisify(exec);
 interface SettingsStore {
   openrouterApiKey: string;
   nvidiaNimApiKey: string;
+  workspace: string;
 }
 
 interface ToolCall {
@@ -57,6 +58,7 @@ const store = new Store<SettingsStore>({
   defaults: {
     openrouterApiKey: '',
     nvidiaNimApiKey: '',
+    workspace: '',
   },
 });
 
@@ -66,10 +68,11 @@ const store = new Store<SettingsStore>({
 
 /**
  * Working directory for all file operations.
- * All paths are resolved relative to this directory.
- * Change this to your project root.
+ * Reads from electron-store; falls back to cwd.
  */
-const WORKSPACE_DIR = process.env.WORKSPACE_DIR || process.cwd();
+function getWorkspaceDir(): string {
+  return store.get('workspace') || process.cwd();
+}
 
 /**
  * Maximum number of agentic loop iterations to prevent infinite loops.
@@ -188,9 +191,15 @@ RULES:
 - If a command fails, read the error output and fix the issue.
 - Be thorough — complete the entire task before stopping.
 - When using run_command, prefer short, focused commands over long chains.
-- Your workspace is: ${WORKSPACE_DIR}
+- Your workspace is: {{WORKSPACE}}
 
 IMPORTANT: You MUST call tools. Do NOT output code blocks as your response. Use write_file to create files, and run_command to execute them.`;
+
+// The system prompt is regenerated per request to include the current workspace
+function getSystemPrompt(): string {
+  const workspace = getWorkspaceDir();
+  return SYSTEM_PROMPT.replace('{{WORKSPACE}}', workspace);
+}
 
 // ============================================================================
 // TOOL EXECUTION FUNCTIONS
@@ -200,10 +209,11 @@ IMPORTANT: You MUST call tools. Do NOT output code blocks as your response. Use 
  * Resolves a file path relative to the workspace directory.
  */
 function resolvePath(filePath: string): string {
+  const workspace = getWorkspaceDir();
   if (isAbsolute(filePath)) {
     return resolve(filePath);
   }
-  return resolve(WORKSPACE_DIR, filePath);
+  return resolve(workspace, filePath);
 }
 
 /**
@@ -211,7 +221,7 @@ function resolvePath(filePath: string): string {
  */
 function isPathSafe(filePath: string): boolean {
   const resolved = resolvePath(filePath);
-  const workspace = resolve(WORKSPACE_DIR);
+  const workspace = resolve(getWorkspaceDir());
   return resolved.startsWith(workspace);
 }
 
@@ -222,7 +232,7 @@ async function executeWriteFile(args: { file_path: string; content: string }): P
   const { file_path, content } = args;
   
   if (!isPathSafe(file_path)) {
-    return `ERROR: Path "${file_path}" is outside the workspace. Use a relative path or a path within ${WORKSPACE_DIR}.`;
+    return `ERROR: Path "${file_path}" is outside the workspace. Use a relative path or a path within ${getWorkspaceDir()}.`;
   }
 
   const fullPath = resolvePath(file_path);
@@ -287,7 +297,7 @@ async function executeRunCommand(args: { command: string; cwd?: string }): Promi
     }
   }
 
-  const workingDir = cwd ? resolvePath(cwd) : WORKSPACE_DIR;
+  const workingDir = cwd ? resolvePath(cwd) : getWorkspaceDir();
 
   try {
     // Execute with a 60-second timeout
@@ -427,7 +437,7 @@ async function agenticLoop(
 ): Promise<{ messages: ChatMessage[]; iterations: number }> {
   // Start with system prompt + user messages
   const messages: ChatMessage[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: getSystemPrompt() },
     ...userMessages,
   ];
 
