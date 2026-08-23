@@ -316,6 +316,128 @@ async function executeGlobFiles(args: { pattern: string }): Promise<string> {
   }
 }
 
+// ============================================================================
+// WEB TOOLS — Give local LLMs internet access via the server
+// ============================================================================
+
+/**
+ * Web Search via DuckDuckGo (free, no API key needed)
+ * Returns top 5 results with titles, URLs, and snippets.
+ */
+async function executeWebSearch(args: { query: string; max_results?: number }): Promise<string> {
+  try {
+    const maxResults = Math.min(args.max_results || 5, 10);
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(args.query)}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    const html = await response.text();
+    // Parse DuckDuckGo HTML results
+    const results: string[] = [];
+    const resultRegex = /<a[^>]+class="result__a"[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>[\s\S]*?<a[^>]+class="result__snippet"[^>]*>([^<]*(?:<[^>]+>[^<]*)*)<\/a>/g;
+    let match: RegExpExecArray | null;
+    while ((match = resultRegex.exec(html)) !== null && results.length < maxResults) {
+      let href = match[1];
+      // DuckDuckGo wraps URLs in redirects
+      const uddg = href.match(/uddg=([^&]+)/);
+      if (uddg) href = decodeURIComponent(uddg[1]);
+      const title = match[2].replace(/<[^>]+>/g, '').trim();
+      const snippet = match[3].replace(/<[^>]+>/g, '').trim();
+      if (title && href.startsWith('http')) {
+        results.push(`${results.length + 1}. **${title}**\n   ${href}\n   ${snippet}`);
+      }
+    }
+    if (results.length === 0) {
+      // Fallback: try simpler regex
+      const simpleRegex = /<a[^>]+class="result__a"[^>]*>([^<]+)<\/a>/g;
+      const urlRegex = /<a[^>]+class="result__url"[^>]*>([^<]+)<\/a>/g;
+      const titles: string[] = [];
+      const urls: string[] = [];
+      while ((match = simpleRegex.exec(html)) !== null) titles.push(match[1].trim());
+      while ((match = urlRegex.exec(html)) !== null) urls.push(match[1].trim());
+      for (let i = 0; i < Math.min(titles.length, urls.length, maxResults); i++) {
+        results.push(`${i + 1}. **${titles[i]}**\n   ${urls[i]}`);
+      }
+    }
+    return results.length > 0
+      ? `Search results for "${args.query}":\n\n${results.join('\n\n')}`
+      : `No results found for "${args.query}"`;
+  } catch (err: any) {
+    return `ERROR: Web search failed: ${err.message}`;
+  }
+}
+
+/**
+ * Fetch a URL and return its content as text.
+ * Strips HTML tags, scripts, and styles for readability.
+ */
+async function executeWebFetch(args: { url: string; max_chars?: number }): Promise<string> {
+  try {
+    const response = await fetch(args.url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+      signal: AbortSignal.timeout(20000),
+      redirect: 'follow',
+    });
+    if (!response.ok) return `ERROR: HTTP ${response.status} ${response.statusText}`;
+    let html = await response.text();
+    // Extract title
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].trim() : '';
+    // Remove scripts, styles, nav, footer
+    html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
+    html = html.replace(/<style[\s\S]*?<\/style>/gi, '');
+    html = html.replace(/<nav[\s\S]*?<\/nav>/gi, '');
+    html = html.replace(/<footer[\s\S]*?<\/footer>/gi, '');
+    html = html.replace(/<header[\s\S]*?<\/header>/gi, '');
+    // Convert common tags to text
+    html = html.replace(/<br\s*\/?>/gi, '\n');
+    html = html.replace(/<p[^>]*>/gi, '\n');
+    html = html.replace(/<h[1-6][^>]*>/gi, '\n## ');
+    html = html.replace(/<li[^>]*>/gi, '\n- ');
+    // Remove remaining HTML tags
+    html = html.replace(/<[^>]+>/g, '');
+    // Decode entities
+    html = html.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
+    // Clean whitespace
+    html = html.replace(/\n{3,}/g, '\n\n').trim();
+    const maxChars = args.max_chars || 8000;
+    if (title) html = `# ${title}\n\n${html}`;
+    if (html.length > maxChars) html = html.substring(0, maxChars) + '\n\n... [truncated]';
+    return html || '(empty page)';
+  } catch (err: any) {
+    return `ERROR: Failed to fetch ${args.url}: ${err.message}`;
+  }
+}
+
+/**
+ * Quick web lookup — search and fetch the top result's content.
+ * Combines web_search + web_fetch in one call for convenience.
+ */
+async function executeWebLookup(args: { query: string; max_chars?: number }): Promise<string> {
+  try {
+    // First, search
+    const searchResult = await executeWebSearch({ query: args.query, max_results: 3 });
+    if (searchResult.startsWith('ERROR') || searchResult.includes('No results')) {
+      return searchResult;
+    }
+    // Extract the first URL
+    const urlMatch = searchResult.match(/https?:\/\/[^\s\n]+/);
+    if (!urlMatch) return `Found results but could not extract URL:\n${searchResult}`;
+    // Fetch the first result
+    const url = urlMatch[0];
+    const content = await executeWebFetch({ url, max_chars: args.max_chars || 5000 });
+    return `## Search: ${args.query}\n\n${searchResult}\n\n---\n\n## Content from ${url}\n\n${content}`;
+  } catch (err: any) {
+    return `ERROR: Web lookup failed: ${err.message}`;
+  }
+}
+
 interface ToolExecResult { output: string; diff?: any; }
 
 async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
@@ -329,6 +451,9 @@ async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
     case 'list_files': return { output: await executeListFiles(args) };
     case 'search_files': return { output: await executeSearchFiles(args) };
     case 'glob_files': return { output: await executeGlobFiles(args) };
+    case 'web_search': return { output: await executeWebSearch(args) };
+    case 'web_fetch': return { output: await executeWebFetch(args) };
+    case 'web_lookup': return { output: await executeWebLookup(args) };
     case 'browser_navigate':
     case 'browser_screenshot':
     case 'browser_get_content':
@@ -757,6 +882,9 @@ const TOOL_DEFINITIONS = [
   { type: 'function', function: { name: 'search_files', description: 'Search for a pattern across files using regex. Returns matching lines with file paths and line numbers.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'Regex pattern to search for' }, file_pattern: { type: 'string', description: 'Optional file glob, e.g. "*.ts"' } }, required: ['pattern'] } } },
   { type: 'function', function: { name: 'glob_files', description: 'Find files matching a glob pattern. Use to discover files by name.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'Glob pattern, e.g. "**/*.ts", "src/**/*.test.js"' } }, required: ['pattern'] } } },
   { type: 'function', function: { name: 'run_command', description: 'Execute a shell command. Use for builds, tests, git, and any CLI operations.', parameters: { type: 'object', properties: { command: { type: 'string', description: 'The shell command to execute' }, cwd: { type: 'string', description: 'Optional working directory (default: workspace)' } }, required: ['command'] } } },
+  { type: 'function', function: { name: 'web_search', description: 'Search the internet using DuckDuckGo. Returns top results with titles, URLs, and snippets. Use when you need current information, documentation, or solutions.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, max_results: { type: 'number', description: 'Max results (default 5, max 10)' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'web_fetch', description: 'Fetch a URL and return its content as readable text. Strips HTML for clean output.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'URL to fetch' }, max_chars: { type: 'number', description: 'Max characters (default 8000)' } }, required: ['url'] } } },
+  { type: 'function', function: { name: 'web_lookup', description: 'Search and fetch the top result. Combines web_search + web_fetch for quick lookups.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'What to look up' }, max_chars: { type: 'number', description: 'Max characters for content' } }, required: ['query'] } } },
 ];
 
 async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, model: string, provider: string, userMessages: ChatMessage[], conversationId?: string): Promise<{ messages: ChatMessage[]; iterations: number; tokenUsage: { prompt: number; completion: number } }> {
