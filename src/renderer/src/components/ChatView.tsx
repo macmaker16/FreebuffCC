@@ -46,6 +46,10 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
   const [showContextPanel, setShowContextPanel] = useState(true);
   const [contextPanelTab, setContextPanelTab] = useState<'terminal' | 'diff'>('terminal');
   const [lastDiff, setLastDiff] = useState<any>(null);
+  const [contextPanelWidth, setContextPanelWidth] = useState(380);
+  const isDragging = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
 
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -364,6 +368,37 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
   };
 
   // ============================================================================
+  // SPLITTER DRAG HANDLERS
+  // ============================================================================
+
+  const handleSplitterMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    startX.current = e.clientX;
+    startWidth.current = contextPanelWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return;
+      const dx = startX.current - ev.clientX; // dragging left = wider panel
+      const newWidth = Math.min(Math.max(startWidth.current + dx, 240), 700);
+      setContextPanelWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [contextPanelWidth]);
+
+  // ============================================================================
   // RENDER
   // ============================================================================
 
@@ -382,42 +417,6 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
 
   return (
     <div className="h-full flex">
-      {/* Context Panel (right side, toggleable) */}
-      {showContextPanel && (
-        <div className="w-[380px] border-l border-dark-700 bg-dark-900 flex flex-col flex-shrink-0">
-          {/* Context Panel Header */}
-          <div className="px-3 py-2 border-b border-dark-700 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <button onClick={() => setContextPanelTab('terminal')}
-                className={`px-2 py-0.5 text-[10px] rounded font-medium transition-colors ${contextPanelTab === 'terminal' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
-                <Terminal size={10} className="inline mr-1" />Activity
-              </button>
-              <button onClick={() => setContextPanelTab('diff')}
-                className={`px-2 py-0.5 text-[10px] rounded font-medium transition-colors ${contextPanelTab === 'diff' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
-                <FileCode size={10} className="inline mr-1" />Diff
-              </button>
-            </div>
-            <button onClick={() => setShowContextPanel(false)} className="text-dark-500 hover:text-white">
-              <X size={12} />
-            </button>
-          </div>
-          {/* Context Panel Content */}
-          <div className="flex-1 overflow-hidden">
-            {contextPanelTab === 'terminal' ? (
-              <TerminalPanel toolEvents={toolEvents} iteration={currentIteration} maxIterations={20} isRunning={loading} />
-            ) : lastDiff ? (
-              <DiffViewer diff={lastDiff} />
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full text-dark-500">
-                <FileCode size={24} className="mb-2 opacity-30" />
-                <p className="text-[10px]">No diffs yet</p>
-                <p className="text-[9px] mt-1">File edits will show side-by-side diffs here</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Sessions Sidebar (toggleable) */}
       {viewMode === 'sessions' && (
         <div className="w-64 border-r border-dark-700 bg-dark-900 flex flex-col">
@@ -690,6 +689,62 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
           </div>
         </div>
       </div>
+
+      {/* Drag-to-resize Splitter + Context Panel (right side) */}
+      {showContextPanel && (
+        <>
+          {/* Splitter handle */}
+          <div
+            onMouseDown={handleSplitterMouseDown}
+            className="w-1 flex-shrink-0 cursor-col-resize group hover:bg-brand-500/40 transition-colors relative"
+          >
+            {/* Visible grip dots */}
+            <div className="absolute inset-y-0 -left-0.5 w-2 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex flex-col gap-0.5">
+                <div className="w-0.5 h-0.5 bg-dark-400 rounded-full" />
+                <div className="w-0.5 h-0.5 bg-dark-400 rounded-full" />
+                <div className="w-0.5 h-0.5 bg-dark-400 rounded-full" />
+                <div className="w-0.5 h-0.5 bg-dark-400 rounded-full" />
+                <div className="w-0.5 h-0.5 bg-dark-400 rounded-full" />
+              </div>
+            </div>
+          </div>
+
+          {/* Context Panel */}
+          <div style={{ width: contextPanelWidth }} className="border-l border-dark-700 bg-dark-900 flex flex-col flex-shrink-0 min-w-[200px] max-w-[700px]">
+            {/* Context Panel Header */}
+            <div className="px-3 py-2 border-b border-dark-700 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <button onClick={() => setContextPanelTab('terminal')}
+                  className={`px-2 py-0.5 text-[10px] rounded font-medium transition-colors ${contextPanelTab === 'terminal' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
+                  <Terminal size={10} className="inline mr-1" />Activity
+                </button>
+                <button onClick={() => setContextPanelTab('diff')}
+                  className={`px-2 py-0.5 text-[10px] rounded font-medium transition-colors ${contextPanelTab === 'diff' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
+                  <FileCode size={10} className="inline mr-1" />Diff
+                </button>
+              </div>
+              <button onClick={() => setShowContextPanel(false)} className="text-dark-500 hover:text-white">
+                <X size={12} />
+              </button>
+            </div>
+            {/* Context Panel Content */}
+            <div className="flex-1 overflow-hidden">
+              {contextPanelTab === 'terminal' ? (
+                <TerminalPanel toolEvents={toolEvents} iteration={currentIteration} maxIterations={20} isRunning={loading} />
+              ) : lastDiff ? (
+                <DiffViewer diff={lastDiff} />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-dark-500">
+                  <FileCode size={24} className="mb-2 opacity-30" />
+                  <p className="text-[10px]">No diffs yet</p>
+                  <p className="text-[9px] mt-1">File edits will show side-by-side diffs here</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
