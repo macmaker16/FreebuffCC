@@ -175,6 +175,7 @@ export interface OrchestratorResult {
   toolExecutions: { tool: string; result: string; duration_ms: number; phase: string }[];
   memoryEntries: { key: string; value: string }[];
   subAgentResults?: SubAgentResult[];
+  compressionStats?: { compressed: number; tokensSaved: number };
 }
 
 // ============================================================================

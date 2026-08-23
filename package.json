@@ -13,7 +13,8 @@
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
     "start": "electron .",
-    "package": "npm run build && electron-builder --win portable --config"
+    "package": "npm run build && electron-builder --win portable --config",
+    "agent:headless": "node dist/main/headless.js"
   },
   "dependencies": {
     "electron-store": "^8.1.0",

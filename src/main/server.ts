@@ -16,7 +16,7 @@
 
 import express, { Request, Response } from 'express';
 import Store from 'electron-store';
-import { Orchestrator } from './agent';
+import { Orchestrator, MultiModelRouter } from './agent';
 import { exec } from 'child_process';
 import { readFile, writeFile, mkdir, access } from 'fs/promises';
 import { dirname, resolve, isAbsolute } from 'path';
@@ -879,7 +879,7 @@ export function startExpressApp(): express.Express {
   // Integrates plugins, MCP, skills, and memory.
   // --------------------------------------------------------------------------
   app.post('/api/agent', async (req: Request, res: Response) => {
-    const { model, messages, provider: explicitProvider } = req.body;
+    const { model, messages, provider: explicitProvider, coderModel, coderProvider } = req.body;
 
     if (!model || !messages) {
       return res.status(400).json({ error: 'model and messages are required' });
@@ -905,8 +905,25 @@ export function startExpressApp(): express.Express {
         workspace: getWorkspaceDir(),
         maxIterations: 12,
         enableMemory: true,
-        enableMCP: false, // Enable when MCP servers are configured
+        enableMCP: false,
       });
+
+      // Configure multi-model routing if a coder model is provided
+      if (coderModel && coderProvider && PROVIDERS[coderProvider]) {
+        const coderProv = PROVIDERS[coderProvider];
+        const coderKey = coderProv.getApiKey();
+        if (coderKey) {
+          const router = new MultiModelRouter({
+            orchestrator: { provider: providerKey, model },
+            coder: { provider: coderProvider, model: coderModel },
+            getApiKey: (p) => PROVIDERS[p]?.getApiKey() || '',
+            getBaseUrl: (p) => getBaseUrl(PROVIDERS[p]!),
+            getAuthPrefix: (p) => PROVIDERS[p]?.authPrefix || 'Bearer ',
+          });
+          orchestrator.setMultiModelRouter(router);
+          console.log(`[Orchestrator] Multi-model routing: orchestrator=${model}, coder=${coderModel}`);
+        }
+      }
 
       await orchestrator.init();
 
@@ -932,6 +949,7 @@ export function startExpressApp(): express.Express {
           total_tool_calls: result.toolExecutions.length,
           memory_entries: result.memoryEntries.length,
           plugins: ['memory'],
+          compression: result.compressionStats,
         },
       });
     } catch (err: any) {

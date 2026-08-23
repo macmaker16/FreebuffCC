@@ -5,6 +5,9 @@
  * - Human-in-the-loop permissions for destructive actions
  * - Auto-formatting after file writes
  * - Memory, MCP, Skills integration
+ * - Dynamic Context Compression (auto-summarize when context is large)
+ * - Multi-Model Routing (cheap orchestrator + heavy coder delegation)
+ * - Workflow Meta-Tools (branch, commit, PR, tickets)
  */
 
 import {
@@ -18,11 +21,14 @@ import { MCPClientManager } from './mcp/client';
 import { TerminalSkill } from './skills/terminal';
 import { FileSystemSkill } from './skills/filesystem';
 import { GitSkill } from './skills/git';
+import { WorkflowMetaTools } from './skills/workflow';
 import { MemorySearchSkill, setMemoryStore } from './skills/memory-search';
 import { loadProjectInstructions } from './memory/instructions';
 import { BUILTIN_SKILLS, detectSkillTrigger, expandSkillArgs } from './skills/builtin-skills';
 import { SubAgentManager } from './subagent/manager';
 import { PermissionManager, PermissionRequest } from './permissions';
+import { ContextCompressionEngine, CompressionStats } from './context-compression';
+import { MultiModelRouter, DelegationResult } from './multi-model-router';
 
 const AGENT_SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant.
 
@@ -43,11 +49,14 @@ TOOLS:
 - search_files: Search text across files
 - run_command: Execute a shell command
 - git_status, git_diff, git_add, git_commit, git_log, git_branch: Git operations
+- create_branch, commit_changes, open_pull_request, update_ticket_status: Workflow tools
+- delegate_complex_code: Offload complex refactors to a more capable model
 
 RULES:
 - ALWAYS use tools. Never just show code.
 - Always verify by reading files or running tests after changes.
 - If a command fails, read the error and fix it.
+- Use delegate_complex_code for complex multi-file refactors.
 - Your workspace is: {{WORKSPACE}}
 {{PROJECT_INSTRUCTIONS}}`;
 
@@ -59,6 +68,8 @@ export class Orchestrator {
   private memoryPlugin: MemoryPlugin;
   private subAgentManager: SubAgentManager;
   private permissionManager: PermissionManager;
+  private compressionEngine: ContextCompressionEngine;
+  private multiModelRouter?: MultiModelRouter;
   private internalSkills: AgentSkill[];
   private sessionId: string;
   private projectInstructions: string = '';
@@ -72,7 +83,8 @@ export class Orchestrator {
     this.mcp = new MCPClientManager();
     this.subAgentManager = new SubAgentManager(config);
     this.permissionManager = new PermissionManager();
-    this.internalSkills = [TerminalSkill, FileSystemSkill, GitSkill];
+    this.compressionEngine = new ContextCompressionEngine({ tokenThreshold: 8000 });
+    this.internalSkills = [TerminalSkill, FileSystemSkill, GitSkill, WorkflowMetaTools];
     this.memoryPlugin = new MemoryPlugin(config.workspace);
     this.plugins.add(this.memoryPlugin);
   }
@@ -84,6 +96,13 @@ export class Orchestrator {
 
   resolvePermission(requestId: string, action: 'approve' | 'deny', alwaysAllow = false): void {
     this.permissionManager.resolvePermission({ requestId, action, alwaysAllow });
+  }
+
+  /**
+   * Configure multi-model routing (orchestrator + coder).
+   */
+  setMultiModelRouter(router: MultiModelRouter): void {
+    this.multiModelRouter = router;
   }
 
   async init(): Promise<void> {
@@ -131,6 +150,19 @@ export class Orchestrator {
         source: 'mcp', mcpServerId: mcpTool.serverId,
       });
     }
+
+    // Add delegate_complex_code tool if multi-model router is configured
+    if (this.multiModelRouter) {
+      const delegateDef = this.multiModelRouter.getDelegateToolDefinition();
+      tools.set('delegate_complex_code', {
+        name: 'delegate_complex_code',
+        description: delegateDef.function.description,
+        definition: delegateDef,
+        execute: async (args) => this.handleDelegation(args),
+        source: 'internal',
+      });
+    }
+
     for (const skill of BUILTIN_SKILLS) {
       tools.set(`skill_${skill.name}`, {
         name: `skill_${skill.name}`, description: skill.description,
@@ -165,6 +197,54 @@ export class Orchestrator {
       });
     }
     return tools;
+  }
+
+  /**
+   * Handle delegation to the coder model.
+   */
+  private async handleDelegation(args: Record<string, any>): Promise<ToolResult> {
+    if (!this.multiModelRouter) {
+      return { success: false, output: '', error: 'No multi-model router configured' };
+    }
+
+    const files: { path: string; content: string }[] = [];
+    if (args.files) {
+      const filePaths = args.files.split(',').map((f: string) => f.trim());
+      for (const fp of filePaths) {
+        files.push({ path: fp, content: '' }); // Will be read by router
+      }
+    }
+
+    const result = await this.multiModelRouter.delegateComplexCode({
+      task: args.task,
+      files,
+      language: args.language,
+      constraints: args.constraints,
+    }, new Map()); // Tools map not needed — router reads files itself
+
+    if (result.success) {
+      // Write the delegated files using FileSystem skill
+      const fs = require('fs');
+      const pathMod = require('path');
+      for (const file of result.filesChanged) {
+        try {
+          const fullPath = pathMod.resolve(this.config.workspace, file.path);
+          const dir = pathMod.dirname(fullPath);
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(fullPath, file.content, 'utf-8');
+          console.log(`[Orchestrator] Delegated file written: ${file.path}`);
+        } catch (err: any) {
+          console.error(`[Orchestrator] Failed to write delegated file ${file.path}:`, err.message);
+        }
+      }
+
+      return {
+        success: true,
+        output: `Coder model generated code:\n\n${result.explanation}\n\nFiles written:\n${result.filesChanged.map(f => `  - ${f.path}`).join('\n')}`,
+      };
+    }
+
+    return { success: false, output: '', error: result.error || result.explanation };
   }
 
   private async callLLM(messages: ChatMessage[], tools: Map<string, AgentTool>): Promise<any> {
@@ -276,11 +356,32 @@ export class Orchestrator {
 
     let iterations = 0;
     let consecutiveNoToolCalls = 0;
+    let totalCompressionSavings = 0;
 
     while (iterations < maxIterations) {
       if (this.config.abortSignal?.aborted) { console.log(`[Orchestrator] Aborted`); break; }
       iterations++;
       console.log(`[Orchestrator] Iter ${iterations}/${maxIterations}`);
+
+      // === CONTEXT COMPRESSION CHECK ===
+      const analysis = this.compressionEngine.analyze(allMessages);
+      if (analysis.needsCompression) {
+        console.log(`[Orchestrator] Context at ${analysis.totalTokens} tokens, compressing...`);
+        try {
+          const { messages: compressed, stats } = await this.compressionEngine.maybeCompress(
+            allMessages,
+            // Use LLM-based compression if we have a coder model or just naive
+            undefined,
+          );
+          if (stats.triggered) {
+            allMessages.length = 0;
+            allMessages.push(...compressed);
+            totalCompressionSavings += stats.totalTokensBefore - stats.totalTokensAfter;
+          }
+        } catch (err: any) {
+          console.error(`[Orchestrator] Compression failed:`, err.message);
+        }
+      }
 
       const response = await this.callLLM(allMessages, tools);
       const choice = response.choices?.[0];
@@ -329,7 +430,16 @@ export class Orchestrator {
       await this.memoryPlugin.getStore().save();
     }
 
-    return { messages: allMessages, iterations, toolExecutions, memoryEntries: [] };
+    return {
+      messages: allMessages,
+      iterations,
+      toolExecutions,
+      memoryEntries: [],
+      compressionStats: {
+        compressed: this.compressionEngine.getCompressionCount(),
+        tokensSaved: totalCompressionSavings,
+      },
+    };
   }
 
   private createHookContext(messages: ChatMessage[], extra?: Record<string, any>): HookContext {
