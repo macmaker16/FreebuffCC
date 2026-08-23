@@ -145,7 +145,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             setCurrentIteration(iteration);
             setContextPanelTab('terminal');
           },
-          onToolComplete: (tool, success, output, iteration) => {
+          onToolComplete: (tool, success, output, iteration, diff) => {
             setToolActivity(prev => prev.map(t => t.status === 'running' && t.name === tool ? { ...t, status: success ? 'completed' : 'failed' } : t));
             setToolEvents(prev => {
               const updated = [...prev];
@@ -157,6 +157,11 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
               }
               return updated;
             });
+            // Capture diff for the DiffViewer panel
+            if (diff && tool === 'edit_file') {
+              setLastDiff(diff);
+              setContextPanelTab('diff');
+            }
           },
           onIterationStart: (iteration, max) => {
             setToolActivity(prev => [...prev, { name: `Iteration ${iteration}/${max}`, status: 'running' }]);

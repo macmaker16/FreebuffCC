@@ -72,7 +72,7 @@ export async function sendAgentMessage(
 export interface StreamCallbacks {
   onToken?: (content: string) => void;
   onToolStart?: (tool: string, args: any, iteration: number) => void;
-  onToolComplete?: (tool: string, success: boolean, outputPreview: string, iteration: number) => void;
+  onToolComplete?: (tool: string, success: boolean, outputPreview: string, iteration: number, diff?: any) => void;
   onIterationStart?: (iteration: number, maxIterations: number) => void;
   onPhaseChange?: (phase: string, iteration: number) => void;
   onTokenUsage?: (prompt: number, completion: number, totalPrompt: number, totalCompletion: number) => void;
@@ -128,7 +128,7 @@ export function sendAgentMessageStream(
               switch (currentEvent) {
                 case 'token_stream': callbacks?.onToken?.(data.content); break;
                 case 'tool_start': callbacks?.onToolStart?.(data.tool, data.args, data.iteration); break;
-                case 'tool_complete': callbacks?.onToolComplete?.(data.tool, data.success, data.outputPreview, data.iteration); break;
+                case 'tool_complete': callbacks?.onToolComplete?.(data.tool, data.success, data.outputPreview, data.iteration, data.diff); break;
                 case 'iteration_start': callbacks?.onIterationStart?.(data.iteration, data.maxIterations); break;
                 case 'phase_change': callbacks?.onPhaseChange?.(data.phase, data.iteration); break;
                 case 'token_usage': callbacks?.onTokenUsage?.(data.prompt, data.completion, data.totalPrompt, data.totalCompletion); break;

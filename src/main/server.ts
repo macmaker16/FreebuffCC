@@ -164,6 +164,33 @@ async function executeWriteFile(args: { file_path: string; content: string }): P
   } catch (err: any) { return `ERROR writing file: ${err.message}`; }
 }
 
+async function executeEditFile(args: { file_path: string; old_string: string; new_string: string }): Promise<ToolExecResult> {
+  if (!args.file_path || args.old_string === undefined || args.new_string === undefined) {
+    return { output: 'ERROR: file_path, old_string, and new_string are required' };
+  }
+  if (!isPathSafe(args.file_path)) {
+    return { output: `ERROR: Path outside workspace: ${args.file_path}` };
+  }
+  try {
+    const fullPath = resolvePath(args.file_path);
+    let currentContent = '';
+    try { currentContent = await readFile(fullPath, 'utf-8'); } catch { /* new file */ }
+    if (!currentContent.includes(args.old_string)) {
+      return { output: `ERROR: old_string not found in ${args.file_path}. The file may have changed — re-read it and try again.` };
+    }
+    const newContent = currentContent.replace(args.old_string, args.new_string);
+    await writeFile(fullPath, newContent, 'utf-8');
+    // Generate structured diff for the DiffViewer
+    const diff = generateDiff(args.file_path, currentContent, newContent);
+    return {
+      output: `SUCCESS: Edited ${args.file_path} (+${diff.stats.additions} -${diff.stats.deletions})`,
+      diff,
+    };
+  } catch (err: any) {
+    return { output: `ERROR editing file: ${err.message}` };
+  }
+}
+
 async function executeReadFile(args: { file_path: string; line_range?: string }): Promise<string> {
   if (!isPathSafe(args.file_path)) return `ERROR: Path outside workspace: ${args.file_path}`;
   try {
@@ -238,15 +265,18 @@ async function executeSearchFiles(args: any): Promise<string> {
   }
 }
 
-async function executeTool(toolCall: ToolCall): Promise<string> {
+interface ToolExecResult { output: string; diff?: any; }
+
+async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
   let args: any;
-  try { args = JSON.parse(toolCall.function.arguments); } catch { return `ERROR: Failed to parse tool arguments`; }
+  try { args = JSON.parse(toolCall.function.arguments); } catch { return { output: `ERROR: Failed to parse tool arguments` }; }
   switch (toolCall.function.name) {
-    case 'write_file': return executeWriteFile(args);
-    case 'read_file': return executeReadFile(args);
-    case 'run_command': return executeRunCommand(args);
-    case 'list_files': return executeListFiles(args);
-    case 'search_files': return executeSearchFiles(args);
+    case 'write_file': return { output: await executeWriteFile(args) };
+    case 'edit_file': return await executeEditFile(args);
+    case 'read_file': return { output: await executeReadFile(args) };
+    case 'run_command': return { output: await executeRunCommand(args) };
+    case 'list_files': return { output: await executeListFiles(args) };
+    case 'search_files': return { output: await executeSearchFiles(args) };
     case 'browser_navigate':
     case 'browser_screenshot':
     case 'browser_get_content':
@@ -256,9 +286,9 @@ async function executeTool(toolCall: ToolCall): Promise<string> {
     case 'browser_console': {
       const ctx = { sessionId: 'agentic', workspace: getWorkspaceDir(), model: '', messages: [], iteration: 0, maxIterations: 1, tools: new Map(), metadata: {} };
       const result = await BrowserSkill.execute(toolCall.function.name, args, ctx);
-      return result.output || result.error || '(no output)';
+      return { output: result.output || result.error || '(no output)' };
     }
-    default: return `ERROR: Unknown tool "${toolCall.function.name}"`;
+    default: return { output: `ERROR: Unknown tool "${toolCall.function.name}"` };
   }
 }
 
@@ -468,11 +498,13 @@ async function* agenticLoopStream(
       try { args = JSON.parse(toolCall.function.arguments); } catch { /* ignore */ }
       yield { event: 'tool_start', data: { tool: toolCall.function.name, args, iteration: iterations } };
 
-      const toolResult = await executeTool(toolCall);
+      const toolExecResult = await executeTool(toolCall);
+      const toolResult = toolExecResult.output;
       const isSuccess = !toolResult.startsWith('ERROR');
       yield { event: 'tool_complete', data: {
         tool: toolCall.function.name, success: isSuccess,
         outputPreview: toolResult.substring(0, 300), iteration: iterations,
+        ...(toolExecResult.diff ? { diff: toolExecResult.diff } : {}),
       }};
 
       messages.push({ role: 'tool', content: toolResult, tool_call_id: toolCall.id });
@@ -507,6 +539,7 @@ async function* agenticLoopStream(
 
 const TOOL_DEFINITIONS = [
   { type: 'function', function: { name: 'write_file', description: 'Write content to a file. Creates parent dirs automatically.', parameters: { type: 'object', properties: { file_path: { type: 'string' }, content: { type: 'string' } }, required: ['file_path', 'content'] } } },
+  { type: 'function', function: { name: 'edit_file', description: 'Edit a file by replacing exact text. Provide the old_string to find and new_string to replace it with. Generates a visual diff for review.', parameters: { type: 'object', properties: { file_path: { type: 'string' }, old_string: { type: 'string', description: 'The exact text to find and replace' }, new_string: { type: 'string', description: 'The replacement text' } }, required: ['file_path', 'old_string', 'new_string'] } } },
   { type: 'function', function: { name: 'read_file', description: 'Read file contents.', parameters: { type: 'object', properties: { file_path: { type: 'string' } }, required: ['file_path'] } } },
   { type: 'function', function: { name: 'run_command', description: 'Execute a shell command.', parameters: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' } }, required: ['command'] } } },
 ];
@@ -570,11 +603,13 @@ async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, 
         tool: toolCall.function.name, args, iteration: iterations,
       });
 
-      const result = await executeTool(toolCall);
+      const execResult = await executeTool(toolCall);
+      const result = execResult.output;
       const isSuccess = !result.startsWith('ERROR');
       agentEventBus.emit('tool_complete', session, {
         tool: toolCall.function.name, success: isSuccess,
         outputPreview: result.substring(0, 300), iteration: iterations,
+        ...(execResult.diff ? { diff: execResult.diff } : {}),
       });
 
       messages.push({ role: 'tool', content: result, tool_call_id: toolCall.id });
