@@ -232,6 +232,14 @@ function App() {
 
       {/* Main Content */}
       <main className="flex-1 mt-7 overflow-hidden">
+        {/* ChatView is always mounted (hidden via CSS) to preserve state when switching tabs */}
+        <div style={{ display: activeView === 'chat' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+          <ChatView
+            activeModel={activeModel}
+            modelStatuses={modelStatuses}
+            fallbackMsg={fallbackMsg}
+          />
+        </div>
         {activeView === 'models' && (
           <ModelManager
             models={models}
@@ -241,13 +249,6 @@ function App() {
             onModelSelect={handleModelSelect}
             apiReady={apiReady}
             autoTestRunning={autoTestRunning}
-          />
-        )}
-        {activeView === 'chat' && (
-          <ChatView
-            activeModel={activeModel}
-            modelStatuses={modelStatuses}
-            fallbackMsg={fallbackMsg}
           />
         )}
         {activeView === 'dashboard' && (
