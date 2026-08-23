@@ -18,18 +18,22 @@
 - Agentic loop flow — iteration pattern and tool call cycle
 - Text-based tool call parsing — NIM Llama outputs tool calls as text, not structured
 - JSON repair technique — counting braces/brackets to fix truncated output
+- Tool execution pipeline — executeTool routes to handlers via switch statement
+- Security: isPathSafe resolves paths then checks containment, BLOCKED_COMMANDS prevents destructive ops
+- Three-destination pattern: tool output goes to LLM context, frontend SSE, AND persistence simultaneously
+- edit_file returns { output, diff } — diff feeds the DiffViewer, errors guide LLM retry
+- run_command: blocklist + timeout (60s) + buffer limit (1MB) + output truncation (10K chars)
 
 ### 🟡 Learning
 - SSE streaming — how events flow from server generator to React frontend
+- The error-as-instruction pattern — errors are written to guide the LLM's next action
 
 ### 🔴 Need to Explore
 - Electron app lifecycle (main vs renderer process)
 - Express server routing and middleware
-- TypeScript type system and interfaces
 - React component lifecycle and hooks
-- The agentic loop architecture
-- Tool registration and execution pipeline
-- SSE streaming from server to client
+- The Orchestrator class (full agent system vs simple agentic loop)
+- Context compression and rehydration
 
 ## Concept Mastery Map
 
@@ -57,13 +61,21 @@
 ### 2026-08-23: JSON repair is just brace counting
 The simplest way to fix truncated JSON is to count opening vs closing braces and add the missing ones. Close strings first (add `"`), then arrays (`]`), then objects (`}`). It's not perfect but handles the most common truncation pattern from LLMs.
 
+### 2026-08-23: Three-destination pattern is the key to agent feedback
+Every tool output goes three places simultaneously: back to the LLM (so it learns), to the frontend (so the user sees), and to persistence (so nothing is lost). This is what makes the agent feel responsive and reliable.
+
 ## Session Log
 
 ### 2026-08-23
 - **Explored**: Agentic loop architecture, SSE streaming pipeline, text-based tool call parsing
 - **Learned**: Frontend → Express → LLM flow, async generator pattern, NIM Llama text output quirk
 - **Struggled with**: Understanding why tool calls are dropped silently
-- **Next**: Trace the tool execution pipeline (executeTool → executeWriteFile etc.), understand the diff engine
+
+### 2026-08-23 (Session 2)
+- **Explored**: Tool execution pipeline — executeTool → handlers → three-destination pattern
+- **Learned**: isPathSafe security, BLOCKED_COMMANDS, edit_file error-as-instruction pattern, run_command safety layers
+- **Struggled with**: Nothing — concepts were clear
+- **Next**: Understand the Orchestrator class (full agent vs simple loop), context compression
 
 ---
 
