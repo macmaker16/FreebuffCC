@@ -98,33 +98,31 @@ const BLOCKED_COMMANDS = [
 // SYSTEM PROMPT
 // ============================================================================
 
-const SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant that mirrors Claude Code's capabilities.
+const SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant. You write code, create files, run commands, and build software — just like Claude Code.
 
-YOUR MISSION: Complete the user's task by executing real actions using your tools. NEVER output code blocks or plans without executing them.
-
-## NAVIGATION RULES (ALWAYS FOLLOW)
-Before reading or editing ANY file, you MUST first discover it:
-1. Use glob_files to find files by pattern (e.g. "**/*.ts", "src/**/*.test.js")
-2. Use search_files to find code by content (e.g. function names, imports)
-3. Use list_files to explore directory structure
-4. THEN use read_file with specific file paths (and optional line ranges)
-Only use read_file directly if the user gives you an exact path.
-
-## EXECUTION WORKFLOW
-1. **Explore** — Use glob_files, search_files, list_files to understand the codebase.
-2. **Read** — Use read_file to examine relevant files.
-3. **Plan** — Formulate concrete changes.
-4. **Execute** — Use edit_file (preferred for changes) or write_file (for new files).
-5. **Verify** — Run commands to confirm changes work (build, test, lint).
-6. **Repeat** — If verification fails, diagnose and fix.
-
-## TOOL USAGE RULES
-- prefer edit_file over write_file for modifying existing files.
-- Use read_file with line_range for large files (e.g. "100-200").
-- Use run_command for builds, tests, and shell operations.
-- Always verify after executing — run tests or build commands.
-- If a command fails, read the error and fix it.
+## RULES
+- ALWAYS use tools to do the work. Never output code blocks, markdown, or plans without executing them.
+- When the user asks you to create something, actually create the files using write_file.
+- When the user asks you to modify something, read the file first, then use edit_file with the exact text to replace.
+- After making changes, verify by running the relevant command (build, test, lint).
+- If something fails, read the error output, fix it, and try again.
 - Be thorough — complete the entire task before stopping.
+
+## HOW TO WORK
+1. **Explore** the workspace first: list_files to see what exists, search_files to find relevant code.
+2. **Read** the files you need to understand or modify: read_file.
+3. **Create/Edit** files: write_file for new files, edit_file for modifications.
+4. **Run** commands: npm install, npm test, npm run build, git commands, etc.
+5. **Verify** your work: check the output, read the files you changed.
+
+## TOOLS
+- list_files: explore directories
+- read_file: read file contents (supports line_range for large files)
+- write_file: create new files (creates parent dirs automatically)
+- edit_file: modify existing files (search and replace exact text)
+- search_files: find code patterns with regex
+- glob_files: find files by name pattern
+- run_command: execute shell commands
 
 ## WORKSPACE
 Your workspace is: {{WORKSPACE}}
@@ -265,6 +263,30 @@ async function executeSearchFiles(args: any): Promise<string> {
   }
 }
 
+async function executeGlobFiles(args: { pattern: string }): Promise<string> {
+  try {
+    // Use rg to find files matching a glob pattern
+    const { stdout } = await execAsync(`rg --files -g "${args.pattern}"`, {
+      cwd: getWorkspaceDir(), timeout: 10000, maxBuffer: 1024 * 1024,
+    });
+    const files = stdout.trim().split('\n').filter(Boolean);
+    const max = 50;
+    if (files.length > max) return files.slice(0, max).join('\n') + `\n... [${files.length} total]`;
+    return files.length > 0 ? files.join('\n') : 'No files match pattern';
+  } catch (err: any) {
+    // Fallback: use find command
+    try {
+      const { stdout } = await execAsync(
+        `find . -name "${args.pattern.replace(/\*/g, '*')}" -type f | head -50`,
+        { cwd: getWorkspaceDir(), timeout: 10000 },
+      );
+      return stdout.trim() || 'No files match pattern';
+    } catch (err2: any) {
+      return `ERROR: ${err2.message}`;
+    }
+  }
+}
+
 interface ToolExecResult { output: string; diff?: any; }
 
 async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
@@ -277,6 +299,7 @@ async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
     case 'run_command': return { output: await executeRunCommand(args) };
     case 'list_files': return { output: await executeListFiles(args) };
     case 'search_files': return { output: await executeSearchFiles(args) };
+    case 'glob_files': return { output: await executeGlobFiles(args) };
     case 'browser_navigate':
     case 'browser_screenshot':
     case 'browser_get_content':
@@ -311,6 +334,66 @@ async function callLLM(baseUrl: string, apiKey: string, authPrefix: string, mode
     if (!response.ok) throw new Error(`API ${response.status}: ${await response.text().catch(() => '')}`);
     return await response.json();
   } catch (err: any) { clearTimeout(timeout); throw err; }
+}
+
+// ============================================================================
+// TEXT-BASED TOOL CALL PARSER (for NIM Llama models that output tool calls as text)
+// ============================================================================
+
+function parseToolCallsFromText(content: string): ToolCall[] {
+  const toolCalls: ToolCall[] = [];
+  const toolNames = TOOL_DEFINITIONS.map(t => t.function.name);
+
+  // Pattern 1: JSON object with name and parameters
+  // e.g. {"name": "write_file", "parameters": {"file_path": "...", "content": "..."}}
+  const jsonPattern = /\{\s*["']name["']\s*:\s*["']([\w_]+)["']\s*,\s*["']parameters["']\s*:\s*(\{[^}]*\}(?:\s*\{[^}]*\})*)/g;
+  let match: RegExpExecArray | null;
+  while ((match = jsonPattern.exec(content)) !== null) {
+    const name = match[1];
+    if (!toolNames.includes(name)) continue;
+    try {
+      // Try to parse the full JSON object containing name and parameters
+      const fullMatch = content.substring(match.index, match.index + match[0].length);
+      // Find the complete JSON by looking for matching braces
+      let braceDepth = 0;
+      let endIdx = match.index;
+      for (let i = match.index; i < content.length && i < match.index + 5000; i++) {
+        if (content[i] === '{') braceDepth++;
+        if (content[i] === '}') {
+          braceDepth--;
+          if (braceDepth === 0) { endIdx = i + 1; break; }
+        }
+      }
+      const jsonStr = content.substring(match.index, endIdx);
+      const parsed = JSON.parse(jsonStr);
+      const params = parsed.parameters || parsed;
+      toolCalls.push({
+        id: `text_call_${Date.now()}_${toolCalls.length}`,
+        type: 'function',
+        function: { name, arguments: JSON.stringify(params) },
+      });
+    } catch { /* skip malformed JSON */ }
+  }
+
+  // Pattern 2: XML-style tool calls
+  // e.g. <tool>write_file</tool><args>{...}</args>
+  if (toolCalls.length === 0) {
+    const xmlPattern = /<tool>([\w_]+)<\/tool>\s*<args>([\s\S]*?)<\/args>/g;
+    while ((match = xmlPattern.exec(content)) !== null) {
+      const name = match[1];
+      if (!toolNames.includes(name)) continue;
+      try {
+        const params = JSON.parse(match[2]);
+        toolCalls.push({
+          id: `text_call_${Date.now()}_${toolCalls.length}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(params) },
+        });
+      } catch { /* skip */ }
+    }
+  }
+
+  return toolCalls;
 }
 
 // ============================================================================
@@ -401,10 +484,16 @@ async function callLLMStream(
     }
 
     // Emit tool calls as complete objects
-    const toolCalls: ToolCall[] = Object.values(toolCallsMap).map(tc => ({
+    let toolCalls: ToolCall[] = Object.values(toolCallsMap).map(tc => ({
       id: tc.id, type: 'function' as const,
       function: { name: tc.name, arguments: tc.arguments },
     }));
+
+    // FALLBACK: Parse tool calls from content text (NIM Llama outputs tool calls as text)
+    if (toolCalls.length === 0 && fullContent) {
+      toolCalls = parseToolCallsFromText(fullContent);
+    }
+
     for (const tc of toolCalls) {
       callbacks.onToolCall?.(tc);
     }
@@ -538,10 +627,13 @@ async function* agenticLoopStream(
 // ============================================================================
 
 const TOOL_DEFINITIONS = [
-  { type: 'function', function: { name: 'write_file', description: 'Write content to a file. Creates parent dirs automatically.', parameters: { type: 'object', properties: { file_path: { type: 'string' }, content: { type: 'string' } }, required: ['file_path', 'content'] } } },
-  { type: 'function', function: { name: 'edit_file', description: 'Edit a file by replacing exact text. Provide the old_string to find and new_string to replace it with. Generates a visual diff for review.', parameters: { type: 'object', properties: { file_path: { type: 'string' }, old_string: { type: 'string', description: 'The exact text to find and replace' }, new_string: { type: 'string', description: 'The replacement text' } }, required: ['file_path', 'old_string', 'new_string'] } } },
-  { type: 'function', function: { name: 'read_file', description: 'Read file contents.', parameters: { type: 'object', properties: { file_path: { type: 'string' } }, required: ['file_path'] } } },
-  { type: 'function', function: { name: 'run_command', description: 'Execute a shell command.', parameters: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' } }, required: ['command'] } } },
+  { type: 'function', function: { name: 'list_files', description: 'List files and directories in a path. Use to explore the project structure.', parameters: { type: 'object', properties: { dir_path: { type: 'string', description: 'Directory path relative to workspace (default: workspace root)' } }, required: [] } } },
+  { type: 'function', function: { name: 'read_file', description: 'Read file contents. Supports line_range for large files.', parameters: { type: 'object', properties: { file_path: { type: 'string' }, line_range: { type: 'string', description: 'Optional line range, e.g. "100-200"' } }, required: ['file_path'] } } },
+  { type: 'function', function: { name: 'write_file', description: 'Write content to a file. Creates parent dirs automatically. Use for NEW files only.', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Path relative to workspace' }, content: { type: 'string', description: 'Full file content' } }, required: ['file_path', 'content'] } } },
+  { type: 'function', function: { name: 'edit_file', description: 'Edit a file by replacing exact text. Provide the old_string to find and new_string to replace it with. ALWAYS use this instead of write_file for modifying existing files.', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Path relative to workspace' }, old_string: { type: 'string', description: 'The EXACT text to find (must match exactly)' }, new_string: { type: 'string', description: 'The replacement text' } }, required: ['file_path', 'old_string', 'new_string'] } } },
+  { type: 'function', function: { name: 'search_files', description: 'Search for a pattern across files using regex. Returns matching lines with file paths and line numbers.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'Regex pattern to search for' }, file_pattern: { type: 'string', description: 'Optional file glob, e.g. "*.ts"' } }, required: ['pattern'] } } },
+  { type: 'function', function: { name: 'glob_files', description: 'Find files matching a glob pattern. Use to discover files by name.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'Glob pattern, e.g. "**/*.ts", "src/**/*.test.js"' } }, required: ['pattern'] } } },
+  { type: 'function', function: { name: 'run_command', description: 'Execute a shell command. Use for builds, tests, git, and any CLI operations.', parameters: { type: 'object', properties: { command: { type: 'string', description: 'The shell command to execute' }, cwd: { type: 'string', description: 'Optional working directory (default: workspace)' } }, required: ['command'] } } },
 ];
 
 async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, model: string, provider: string, userMessages: ChatMessage[], conversationId?: string): Promise<{ messages: ChatMessage[]; iterations: number; tokenUsage: { prompt: number; completion: number } }> {
@@ -586,16 +678,27 @@ async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, 
 
     agentEventBus.emit('llm_response', session, { iteration: iterations, hasToolCalls: !!(choice.message.tool_calls?.length) });
 
-    const assistantMsg = choice.message;
-    messages.push({ role: 'assistant', content: assistantMsg.content, tool_calls: assistantMsg.tool_calls });
+    let assistantMsg = choice.message;
 
-    if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
+    // FALLBACK: Parse tool calls from content text (NIM Llama outputs tool calls as text)
+    let toolCalls = assistantMsg.tool_calls;
+    if ((!toolCalls || toolCalls.length === 0) && assistantMsg.content) {
+      const parsed = parseToolCallsFromText(assistantMsg.content);
+      if (parsed.length > 0) {
+        console.log(`[Agent] Parsed ${parsed.length} tool calls from text content`);
+        toolCalls = parsed;
+      }
+    }
+
+    messages.push({ role: 'assistant', content: assistantMsg.content, tool_calls: toolCalls });
+
+    if (!toolCalls || toolCalls.length === 0) {
       console.log(`[Agent] Completed after ${iterations} iterations`);
       agentEventBus.emit('agent_end', session, { iterations, totalToolCalls: messages.filter(m => m.role === 'tool').length, totalPromptTokens, totalCompletionTokens });
       return { messages, iterations, tokenUsage: { prompt: totalPromptTokens, completion: totalCompletionTokens } };
     }
 
-    for (const toolCall of assistantMsg.tool_calls) {
+    for (const toolCall of toolCalls!) {
       console.log(`[Agent] Tool: ${toolCall.function.name}`);
       let args: any = {};
       try { args = JSON.parse(toolCall.function.arguments); } catch { /* ignore */ }
