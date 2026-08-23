@@ -1314,6 +1314,42 @@ export async function startExpressApp(): Promise<express.Express> {
   });
 
   // ==========================================================================
+  // Plugin Marketplace API
+  // ==========================================================================
+  const { getPluginRegistry } = require('./agent/plugins/registry');
+  const pluginRegistry = getPluginRegistry();
+
+  app.get('/api/plugins', (_req: Request, res: Response) => {
+    const query = _req.query.q as string;
+    const category = _req.query.category as string;
+    let plugins = pluginRegistry.getAll();
+    if (query) plugins = pluginRegistry.search(query);
+    else if (category && category !== 'all') plugins = pluginRegistry.getByCategory(category);
+    res.json({ plugins, stats: pluginRegistry.getStats() });
+  });
+
+  app.post('/api/plugins/install', (req: Request, res: Response) => {
+    const { pluginId } = req.body;
+    if (!pluginId) return res.status(400).json({ error: 'pluginId required' });
+    const success = pluginRegistry.install(pluginId);
+    res.json({ success });
+  });
+
+  app.post('/api/plugins/uninstall', (req: Request, res: Response) => {
+    const { pluginId } = req.body;
+    if (!pluginId) return res.status(400).json({ error: 'pluginId required' });
+    const success = pluginRegistry.uninstall(pluginId);
+    res.json({ success });
+  });
+
+  app.post('/api/plugins/toggle', (req: Request, res: Response) => {
+    const { pluginId } = req.body;
+    if (!pluginId) return res.status(400).json({ error: 'pluginId required' });
+    const success = pluginRegistry.toggle(pluginId);
+    res.json({ success });
+  });
+
+  // ==========================================================================
   // GET /api/conversations — List all conversations
   // ==========================================================================
   app.get('/api/conversations', (_req: Request, res: Response) => {

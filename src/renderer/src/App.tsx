@@ -6,11 +6,12 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Cpu, MessageSquare, Settings, Zap, Circle, Activity, Download, Check, RefreshCw, AlertCircle } from 'lucide-react';
+import { Cpu, MessageSquare, Settings, Zap, Circle, Activity, Download, Check, RefreshCw, AlertCircle, Puzzle } from 'lucide-react';
 import ModelManager from './components/ModelManager';
 import ChatView from './components/ChatView';
 import SettingsView from './components/SettingsView';
 import AgentDashboard from './components/AgentDashboard';
+import PluginMarketplace from './components/PluginMarketplace';
 import { Model, ModelStatus } from './types';
 import { initAPI, fetchModels, testModel } from './services/api';
 
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'models', label: 'Models', icon: Cpu },
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
+  { id: 'plugins', label: 'Plugins', icon: Puzzle },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -253,6 +255,9 @@ function App() {
         )}
         {activeView === 'dashboard' && (
           <AgentDashboard serverPort={serverPort} />
+        )}
+        {activeView === 'plugins' && (
+          <PluginMarketplace />
         )}
         {activeView === 'settings' && (
           <SettingsView onSettingsSaved={() => { autoTestDone.current = false; fetchModels().then(setModels); }} />
