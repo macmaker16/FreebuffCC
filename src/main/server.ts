@@ -84,7 +84,20 @@ let tokenTracker: TokenTracker;
 let projectDetector: ProjectDetector;
 
 function getWorkspaceDir(): string {
-  return store.get('workspace') || process.cwd();
+  const stored = store.get('workspace');
+  if (stored) return stored;
+  // Auto-detect: walk up from cwd looking for project markers
+  const { join, dirname } = require('path');
+  const fs = require('fs');
+  const markers = ['package.json', 'Cargo.toml', 'go.mod', 'pyproject.toml', '.git', 'README.md'];
+  let dir = process.cwd();
+  for (let i = 0; i < 5; i++) {
+    for (const marker of markers) {
+      if (fs.existsSync(join(dir, marker))) return dir;
+    }
+    dir = dirname(dir);
+  }
+  return process.cwd();
 }
 
 const MAX_ITERATIONS = 20;
@@ -126,11 +139,27 @@ const SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant.
 
 ## WORKSPACE
 Your workspace is: {{WORKSPACE}}
+{{PROJECT_COMMANDS}}
 {{PROJECT_CONTEXT}}`;
 
-function getSystemPrompt(projectContext: string = ''): string {
+function getSystemPrompt(projectContext: string = '', projectInfo?: any): string {
   const workspace = getWorkspaceDir();
   let prompt = SYSTEM_PROMPT.replace('{{WORKSPACE}}', workspace);
+  // Inject project commands if available
+  if (projectInfo) {
+    const cmds: string[] = [];
+    if (projectInfo.testCommand) cmds.push(`- Test: \`${projectInfo.testCommand}\``);
+    if (projectInfo.buildCommand) cmds.push(`- Build: \`${projectInfo.buildCommand}\``);
+    if (projectInfo.lintCommand) cmds.push(`- Lint: \`${projectInfo.lintCommand}\``);
+    if (projectInfo.devCommand) cmds.push(`- Dev: \`${projectInfo.devCommand}\``);
+    if (cmds.length > 0) {
+      prompt = prompt.replace('{{PROJECT_COMMANDS}}', '\n## Project Commands\nUse these commands to verify your work:\n' + cmds.join('\n'));
+    } else {
+      prompt = prompt.replace('{{PROJECT_COMMANDS}}', '');
+    }
+  } else {
+    prompt = prompt.replace('{{PROJECT_COMMANDS}}', '');
+  }
   if (projectContext) {
     prompt = prompt.replace('{{PROJECT_CONTEXT}}', '\n' + projectContext);
   } else {
@@ -455,6 +484,32 @@ function parseToolCallsFromText(content: string): ToolCall[] {
     }
   }
 
+  // Pattern 3: Markdown code fence tool calls
+  // Looks for JSON objects inside triple-backtick code fences
+  if (toolCalls.length === 0) {
+    const fencePattern = /\x60\x60\x60(?:json)?\s*\n(\{[\s\S]*?\})\s*\n\x60\x60\x60/g;
+    while ((match = fencePattern.exec(content)) !== null) {
+      try {
+        let jsonStr = match[1];
+        let parsed: any;
+        try {
+          parsed = JSON.parse(jsonStr);
+        } catch {
+          const repaired = repairJson(jsonStr);
+          if (repaired) { parsed = JSON.parse(repaired); } else { continue; }
+        }
+        const name = parsed.name;
+        if (!toolNames.includes(name)) continue;
+        const params = parsed.parameters || parsed;
+        toolCalls.push({
+          id: `text_call_${Date.now()}_${toolCalls.length}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(params) },
+        });
+      } catch { /* skip */ }
+    }
+  }
+
   return toolCalls;
 }
 
@@ -474,6 +529,11 @@ async function callLLMStream(
 ): Promise<{ content: string; toolCalls: ToolCall[]; usage: { prompt: number; completion: number } }> {
   const body: any = { model, messages, max_tokens: 4096, temperature: 0.3, stream: true };
   if (tools && tools.length > 0) { body.tools = tools; }
+  // Enable parallel tool calls for providers that support it (not NIM Llama)
+  if (tools && tools.length > 0 && !model.includes('llama')) {
+    body.parallel_tool_calls = true;
+    body.tool_choice = 'auto';
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
@@ -577,9 +637,10 @@ async function* agenticLoopStream(
   userMessages: ChatMessage[], conversationId?: string,
 ): AsyncGenerator<{ event: string; data: any }> {
   const session = `session_${Date.now()}`;
-  const projectContext = projectDetector ? (await projectDetector.detect()).instructions : '';
+  const projectInfo = projectDetector ? await projectDetector.detect() : null;
+  const projectContext = projectInfo?.instructions || '';
   const messages: ChatMessage[] = [
-    { role: 'system', content: getSystemPrompt(projectContext) },
+    { role: 'system', content: getSystemPrompt(projectContext, projectInfo) },
     ...userMessages,
   ];
 
@@ -700,9 +761,10 @@ const TOOL_DEFINITIONS = [
 
 async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, model: string, provider: string, userMessages: ChatMessage[], conversationId?: string): Promise<{ messages: ChatMessage[]; iterations: number; tokenUsage: { prompt: number; completion: number } }> {
   const session = `session_${Date.now()}`;
-  const projectContext = projectDetector ? (await projectDetector.detect()).instructions : '';
+  const projectInfo = projectDetector ? await projectDetector.detect() : null;
+  const projectContext = projectInfo?.instructions || '';
   const messages: ChatMessage[] = [
-    { role: 'system', content: getSystemPrompt(projectContext) },
+    { role: 'system', content: getSystemPrompt(projectContext, projectInfo) },
     ...userMessages,
   ];
 

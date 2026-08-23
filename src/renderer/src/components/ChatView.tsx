@@ -44,7 +44,8 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
   const [toolEvents, setToolEvents] = useState<Array<{ id: string; tool: string; args: Record<string, any>; status: 'running' | 'completed' | 'failed'; output?: string; duration?: number; iteration: number; timestamp: number }>>([]);
   const [currentIteration, setCurrentIteration] = useState(0);
   const [showContextPanel, setShowContextPanel] = useState(true);
-  const [contextPanelTab, setContextPanelTab] = useState<'terminal' | 'diff'>('terminal');
+  const [contextPanelTab, setContextPanelTab] = useState<'terminal' | 'diff' | 'files'>('terminal');
+  const [fileTree, setFileTree] = useState<string[]>([]);
   const [lastDiff, setLastDiff] = useState<any>(null);
   const [contextPanelWidth, setContextPanelWidth] = useState(380);
   const isDragging = useRef(false);
@@ -61,6 +62,13 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
     window.electronAPI.onPermissionRequest((request) => {
       setPendingPermission(request);
     });
+    // Load last active conversation on boot
+    fetchConversations().then(convs => {
+      if (convs.length > 0) {
+        const last = convs[0];
+        loadSession(last.id);
+      }
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -370,6 +378,15 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
     navigator.clipboard.writeText(content);
     setCopiedIdx(idx);
     setTimeout(() => setCopiedIdx(null), 2000);
+  };
+
+  // Fetch file tree for the Files tab
+  const fetchFiles = async () => {
+    try {
+      const res = await fetch('/api/project');
+      const data = await res.json();
+      setFileTree(data.configFiles || []);
+    } catch { setFileTree([]); }
   };
 
   // ============================================================================
@@ -728,6 +745,10 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                   className={`px-2 py-0.5 text-[10px] rounded font-medium transition-colors ${contextPanelTab === 'diff' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
                   <FileCode size={10} className="inline mr-1" />Diff
                 </button>
+                <button onClick={() => { setContextPanelTab('files'); if (fileTree.length === 0) fetchFiles(); }}
+                  className={`px-2 py-0.5 text-[10px] rounded font-medium transition-colors ${contextPanelTab === 'files' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
+                  <Folder size={10} className="inline mr-1" />Files
+                </button>
               </div>
               <button onClick={() => setShowContextPanel(false)} className="text-dark-500 hover:text-white">
                 <X size={12} />
@@ -737,13 +758,31 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             <div className="flex-1 overflow-hidden">
               {contextPanelTab === 'terminal' ? (
                 <TerminalPanel toolEvents={toolEvents} iteration={currentIteration} maxIterations={20} isRunning={loading} />
-              ) : lastDiff ? (
-                <DiffViewer diff={lastDiff} />
+              ) : contextPanelTab === 'diff' ? (
+                lastDiff ? <DiffViewer diff={lastDiff} /> : (
+                  <div className="flex flex-col items-center justify-center h-full text-dark-500">
+                    <FileCode size={24} className="mb-2 opacity-30" />
+                    <p className="text-[10px]">No diffs yet</p>
+                    <p className="text-[9px] mt-1">File edits will show side-by-side diffs here</p>
+                  </div>
+                )
               ) : (
-                <div className="flex flex-col items-center justify-center h-full text-dark-500">
-                  <FileCode size={24} className="mb-2 opacity-30" />
-                  <p className="text-[10px]">No diffs yet</p>
-                  <p className="text-[9px] mt-1">File edits will show side-by-side diffs here</p>
+                <div className="h-full overflow-y-auto">
+                  {fileTree.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-dark-500">
+                      <Folder size={24} className="mb-2 opacity-30" />
+                      <p className="text-[10px]">Loading files...</p>
+                    </div>
+                  ) : (
+                    <div className="p-2 space-y-0.5">
+                      {fileTree.map((f: string) => (
+                        <div key={f} className="flex items-center gap-1.5 px-2 py-0.5 text-[10px] text-dark-300 hover:bg-dark-800 rounded cursor-pointer">
+                          <FileCode size={10} className="text-dark-500 flex-shrink-0" />
+                          <span className="truncate">{f}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
