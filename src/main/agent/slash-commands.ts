@@ -72,6 +72,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/fix', description: 'Find and fix issues in the codebase', usage: '/fix [description]', category: 'agent' },
   { name: '/build', description: 'Build the project', usage: '/build', category: 'agent' },
 
+  // Permissions
+  { name: '/approve', description: 'Approve the pending tool call', usage: '/approve [always]', category: 'agent' },
+  { name: '/deny', description: 'Deny the pending tool call', usage: '/deny', category: 'agent' },
+
   // Info
   { name: '/help', description: 'Show all available commands', usage: '/help', category: 'info' },
 ];

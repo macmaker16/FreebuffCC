@@ -282,6 +282,43 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
         } catch { /* ignore */ }
         return { handled: true };
 
+      case '/approve':
+      case '/allow': {
+        if (pendingPermission) {
+          const always = args.toLowerCase() === 'always' || args.toLowerCase() === 'session';
+          await handlePermission('approve', always);
+          setMessages(prev => [...prev, {
+            id: generateId(), role: 'assistant',
+            content: `Approved: ${pendingPermission.description}${always ? ' (always for this session)' : ''}`,
+            timestamp: Date.now(),
+          }]);
+        } else {
+          setMessages(prev => [...prev, {
+            id: generateId(), role: 'assistant',
+            content: 'No pending permission to approve.', timestamp: Date.now(),
+          }]);
+        }
+        return { handled: true };
+      }
+
+      case '/deny':
+      case '/reject': {
+        if (pendingPermission) {
+          const desc = pendingPermission.description;
+          await handlePermission('deny');
+          setMessages(prev => [...prev, {
+            id: generateId(), role: 'assistant',
+            content: `Denied: ${desc}`, timestamp: Date.now(),
+          }]);
+        } else {
+          setMessages(prev => [...prev, {
+            id: generateId(), role: 'assistant',
+            content: 'No pending permission to deny.', timestamp: Date.now(),
+          }]);
+        }
+        return { handled: true };
+      }
+
       default:
         return { handled: false };
     }
@@ -627,6 +664,12 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
 
         {/* Input */}
         <div className="px-4 py-2 border-t border-dark-700">
+          {pendingPermission && (
+            <div className="flex items-center gap-2 text-orange-400 text-[10px] mb-1">
+              <AlertCircle size={10} className="animate-pulse" />
+              <span>Permission pending — type <code className="bg-dark-800 px-1 rounded">/approve</code> or <code className="bg-dark-800 px-1 rounded">/deny</code></span>
+            </div>
+          )}
           {!activeModel && (
             <div className="flex items-center gap-1 text-yellow-500 text-[10px] mb-1">
               <AlertCircle size={10} />
@@ -636,11 +679,11 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
           <div className="flex gap-2">
             <textarea
               ref={inputRef} value={input} onChange={handleInput} onKeyDown={handleKeyDown}
-              placeholder={activeModel ? 'Message... (Enter) | /help for commands' : 'Select model...'}
-              disabled={!activeModel || loading} rows={1}
+              placeholder={pendingPermission ? '/approve or /deny — or type a message' : activeModel ? 'Message... (Enter) | /help for commands' : 'Select model...'}
+              disabled={(!activeModel && !pendingPermission) || (loading && !pendingPermission)} rows={1}
               className="flex-1 px-3 py-1.5 bg-dark-900 border border-dark-700 rounded-lg text-xs text-white placeholder-dark-500 resize-none focus:outline-none focus:border-brand-500 disabled:opacity-50"
             />
-            <button onClick={handleSend} disabled={!activeModel || loading || !input.trim()}
+            <button onClick={handleSend} disabled={(!activeModel && !pendingPermission) || (loading && !pendingPermission) || !input.trim()}
               className="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-600/50 rounded-lg transition-colors">
               <Send size={14} />
             </button>
@@ -678,6 +721,11 @@ const HELP_TEXT = `## Slash Commands
 \`/resume <id>\` — Resume a previous session
 \`/export\` — Export conversation as markdown
 
+**Permissions:**
+\`/approve\` — Approve the pending tool call (also: \`/allow\`)
+\`/approve always\` — Approve and always allow similar operations
+\`/deny\` — Deny the pending tool call (also: \`/reject\`)
+
 **Project:**
 \`/project\` — Show project info and auto-detection
 \`/config\` — Show current configuration
@@ -690,4 +738,5 @@ const HELP_TEXT = `## Slash Commands
 **Tips:**
 - Press Enter to send, Shift+Enter for newline
 - The agent automatically reads .michaelangelo.md for project context
-- Tool calls require approval for destructive operations`;
+- Tool calls require approval for destructive operations
+- Use \`/approve\` or \`/deny\` instead of clicking the modal buttons`;
