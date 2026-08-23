@@ -16,6 +16,7 @@ import express, { Request, Response } from 'express';
 import Store from 'electron-store';
 import { Orchestrator, MultiModelRouter } from './agent';
 import { BrowserSkill, playwrightReady } from './agent/skills/browser';
+import { agentEventBus } from './agent/event-bus';
 import { ConversationStore, ConversationMessage } from './conversations';
 import { SlashCommandHandler } from './agent/slash-commands';
 import { TokenTracker } from './agent/token-tracker';
@@ -268,11 +269,18 @@ const TOOL_DEFINITIONS = [
 ];
 
 async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, model: string, provider: string, userMessages: ChatMessage[], conversationId?: string): Promise<{ messages: ChatMessage[]; iterations: number; tokenUsage: { prompt: number; completion: number } }> {
+  const session = `session_${Date.now()}`;
   const projectContext = projectDetector ? (await projectDetector.detect()).instructions : '';
   const messages: ChatMessage[] = [
     { role: 'system', content: getSystemPrompt(projectContext) },
     ...userMessages,
   ];
+
+  // Emit agent start event
+  agentEventBus.emit('agent_start', session, {
+    model, provider, prompt: userMessages.filter(m => m.role === 'user').pop()?.content?.substring(0, 200) || '',
+  });
+  agentEventBus.emit('phase_change', session, { phase: 'gather_context', iteration: 0 });
 
   let iterations = 0;
   let totalPromptTokens = 0;
@@ -281,6 +289,7 @@ async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, 
   while (iterations < MAX_ITERATIONS) {
     iterations++;
     console.log(`[Agent] Iter ${iterations}/${MAX_ITERATIONS}`);
+    agentEventBus.emit('llm_call', session, { iteration: iterations, model, toolCount: TOOL_DEFINITIONS.length });
 
     const response = await callLLM(baseUrl, apiKey, authPrefix, model, messages, TOOL_DEFINITIONS);
     const choice = response.choices?.[0];
@@ -290,19 +299,41 @@ async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, 
     if (response.usage) {
       totalPromptTokens += response.usage.prompt_tokens || 0;
       totalCompletionTokens += response.usage.completion_tokens || 0;
+      agentEventBus.emit('token_usage', session, {
+        iteration: iterations,
+        prompt: response.usage.prompt_tokens || 0,
+        completion: response.usage.completion_tokens || 0,
+        totalPrompt: totalPromptTokens,
+        totalCompletion: totalCompletionTokens,
+      });
     }
+
+    agentEventBus.emit('llm_response', session, { iteration: iterations, hasToolCalls: !!(choice.message.tool_calls?.length) });
 
     const assistantMsg = choice.message;
     messages.push({ role: 'assistant', content: assistantMsg.content, tool_calls: assistantMsg.tool_calls });
 
     if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
       console.log(`[Agent] Completed after ${iterations} iterations`);
+      agentEventBus.emit('agent_end', session, { iterations, totalToolCalls: messages.filter(m => m.role === 'tool').length, totalPromptTokens, totalCompletionTokens });
       return { messages, iterations, tokenUsage: { prompt: totalPromptTokens, completion: totalCompletionTokens } };
     }
 
     for (const toolCall of assistantMsg.tool_calls) {
       console.log(`[Agent] Tool: ${toolCall.function.name}`);
+      let args: any = {};
+      try { args = JSON.parse(toolCall.function.arguments); } catch { /* ignore */ }
+      agentEventBus.emit('tool_start', session, {
+        tool: toolCall.function.name, args, iteration: iterations,
+      });
+
       const result = await executeTool(toolCall);
+      const isSuccess = !result.startsWith('ERROR');
+      agentEventBus.emit('tool_complete', session, {
+        tool: toolCall.function.name, success: isSuccess,
+        outputPreview: result.substring(0, 300), iteration: iterations,
+      });
+
       messages.push({ role: 'tool', content: result, tool_call_id: toolCall.id });
 
       // Save tool execution to conversation

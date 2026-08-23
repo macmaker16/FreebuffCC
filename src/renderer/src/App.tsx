@@ -6,16 +6,18 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Cpu, MessageSquare, Settings, Zap, Circle } from 'lucide-react';
+import { Cpu, MessageSquare, Settings, Zap, Circle, Activity } from 'lucide-react';
 import ModelManager from './components/ModelManager';
 import ChatView from './components/ChatView';
 import SettingsView from './components/SettingsView';
+import AgentDashboard from './components/AgentDashboard';
 import { Model, ModelStatus } from './types';
 import { initAPI, fetchModels, testModel } from './services/api';
 
 const NAV_ITEMS = [
-  { id: 'models', label: 'Models', icon: Cpu },
   { id: 'chat', label: 'Chat', icon: MessageSquare },
+  { id: 'models', label: 'Models', icon: Cpu },
+  { id: 'dashboard', label: 'Dashboard', icon: Activity },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -24,6 +26,7 @@ function App() {
   const [models, setModels] = useState<Model[]>([]);
   const [activeModel, setActiveModel] = useState<Model | null>(null);
   const [apiReady, setApiReady] = useState(false);
+  const [serverPort, setServerPort] = useState<number | null>(null);
   const [modelStatuses, setModelStatuses] = useState<Map<string, ModelStatus>>(new Map());
   const [autoTestRunning, setAutoTestRunning] = useState(false);
   const autoTestDone = useRef(false);
@@ -32,7 +35,11 @@ function App() {
 
   // Initialize API on mount
   useEffect(() => {
-    initAPI().then(() => setApiReady(true)).catch(console.error);
+    initAPI().then(async () => {
+      setApiReady(true);
+      const port = await window.electronAPI.getServerPort();
+      setServerPort(port);
+    }).catch(console.error);
   }, []);
 
   // Fetch models when API is ready
@@ -205,6 +212,9 @@ function App() {
             modelStatuses={modelStatuses}
             fallbackMsg={fallbackMsg}
           />
+        )}
+        {activeView === 'dashboard' && (
+          <AgentDashboard serverPort={serverPort} />
         )}
         {activeView === 'settings' && (
           <SettingsView onSettingsSaved={() => { autoTestDone.current = false; fetchModels().then(setModels); }} />

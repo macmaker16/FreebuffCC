@@ -11,10 +11,13 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import * as path from 'path';
 import { createServer, Server } from 'http';
+import { WebSocketServer, WebSocket } from 'ws';
 import { startExpressApp } from './server';
+import { agentEventBus } from './agent/event-bus';
 
 let mainWindow: BrowserWindow | null = null;
 let expressServer: Server | null = null;
+let wss: WebSocketServer | null = null;
 let serverPort: number = 0;
 
 function createWindow(): void {
@@ -42,13 +45,48 @@ function createWindow(): void {
 async function startInternalServer(): Promise<number> {
   return new Promise(async (resolve, reject) => {
     try {
-      const app = await startExpressApp(); // now async
+      const app = await startExpressApp();
       expressServer = createServer(app);
+
+      // Create WebSocket server on the same HTTP server
+      wss = new WebSocketServer({ server: expressServer });
+      const wsClients = new Set<WebSocket>();
+
+      // Forward all agent events to connected WebSocket clients
+      agentEventBus.on('*', (event) => {
+        const payload = JSON.stringify(event);
+        for (const client of wsClients) {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(payload);
+          }
+        }
+      });
+
+      wss.on('connection', (ws) => {
+        wsClients.add(ws);
+        console.log(`[WS] Client connected (${wsClients.size} total)`);
+
+        // Send recent events to newly connected client
+        const recent = agentEventBus.getRecent(100);
+        ws.send(JSON.stringify({ type: 'init', events: recent }));
+
+        ws.on('close', () => {
+          wsClients.delete(ws);
+          console.log(`[WS] Client disconnected (${wsClients.size} remaining)`);
+        });
+
+        ws.on('error', (err) => {
+          console.error('[WS] Error:', err.message);
+          wsClients.delete(ws);
+        });
+      });
+
       expressServer.listen(0, '127.0.0.1', () => {
         const addr = expressServer!.address();
         if (addr && typeof addr === 'object') {
           serverPort = addr.port;
           console.log(`[Michaelangelo] Express proxy running on port ${serverPort}`);
+          console.log(`[Michaelangelo] WebSocket server ready on port ${serverPort}`);
           resolve(serverPort);
         } else {
           reject(new Error('Failed to get server address'));
