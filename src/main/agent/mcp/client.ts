@@ -84,19 +84,21 @@ export class MCPClientManager {
     await this.discoverTools(config.name);
   }
 
-  /** Connect via SSE (Server-Sent Events) */
+  /** Connect via SSE (Server-Sent Events) using the dedicated SSE client */
   private async connectSSE(config: MCPServerConfig): Promise<void> {
     if (!config.url) throw new Error('SSE transport requires a URL');
-    console.log(`[MCP:${config.name}] SSE transport not yet fully implemented, using HTTP fallback`);
-    // SSE implementation would use EventSource or fetch with streaming
-    // For now, mark as connected with no tools
+    const { MCPSSEClient } = require('./sse-client');
+    const sseClient = new MCPSSEClient();
+    await sseClient.connect(config);
+    // Bridge the SSE client's tools into our connection map
     this.connections.set(config.name, {
       config,
-      tools: [],
+      tools: sseClient.getAllTools(),
       connected: true,
       requestId: 0,
       pendingRequests: new Map(),
     });
+    console.log(`[MCP:${config.name}] SSE connected, ${sseClient.getAllTools().length} tools discovered`);
   }
 
   /** Send a JSON-RPC request and wait for response */

@@ -47,5 +47,7 @@ export interface Settings {
   togetherApiKey: string;
   mistralApiKey: string;
   cohereApiKey: string;
+  localLlmEndpoint: string;
+  localLlmApiKey: string;
   workspace: string;
 }

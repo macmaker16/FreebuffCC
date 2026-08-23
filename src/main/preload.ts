@@ -1,36 +1,22 @@
 /**
  * Michaelangelo - Preload Script
- * 
- * Bridges the Electron main process and the React renderer.
- * Only safe, whitelisted methods are exposed to the frontend.
+ * Bridges Electron main process and React renderer.
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  /** Get the Express server port (assigned dynamically at startup) */
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
-
-  /** Open a URL in the default system browser */
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
 
-  /** Get saved API keys from electron-store */
+  // Settings
   getApiKeys: () => ipcRenderer.invoke('get-api-keys'),
-
-  /** Save API keys to electron-store */
-  setApiKeys: (keys: Record<string, string>) =>
-    ipcRenderer.invoke('set-api-keys', keys),
-
-  /** Get the current workspace folder path */
+  setApiKeys: (keys: Record<string, string>) => ipcRenderer.invoke('set-api-keys', keys),
   getWorkspace: () => ipcRenderer.invoke('get-workspace'),
-
-  /** Set the workspace folder path */
   setWorkspace: (path: string) => ipcRenderer.invoke('set-workspace', path),
-
-  /** Open a native folder picker dialog */
   selectFolder: () => ipcRenderer.invoke('select-folder'),
 
-  /** Permission system */
+  // Permissions
   respondPermission: (response: { requestId: string; action: string; alwaysAllow?: boolean }) =>
     ipcRenderer.invoke('permission-response', response),
   onPermissionRequest: (callback: (request: { id: string; description: string; type: string }) => void) => {
@@ -38,10 +24,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 });
 
-/**
- * Type definition for the exposed API.
- * Used by the renderer's TypeScript for type safety.
- */
 export interface ElectronAPI {
   getServerPort: () => Promise<number>;
   openExternal: (url: string) => Promise<void>;

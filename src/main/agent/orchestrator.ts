@@ -1,13 +1,42 @@
 /**
  * Michaelangelo Agent - Master Orchestrator
  * 
- * Clean autonomous tool-calling loop with:
- * - Human-in-the-loop permissions for destructive actions
+ * Production-grade agentic harness implementing Claude Code's architecture:
+ * 
+ *   ┌─────────────────────────────────────────────────────┐
+ *   │  PHASE 1: GATHER CONTEXT                           │
+ *   │  Read files, search patterns, understand the task   │
+ *   └──────────────────┬──────────────────────────────────┘
+ *                      ▼
+ *   ┌─────────────────────────────────────────────────────┐
+ *   │  PHASE 2: PLAN                                     │
+ *   │  Identify what needs to change, plan the approach   │
+ *   └──────────────────┬──────────────────────────────────┘
+ *                      ▼
+ *   ┌─────────────────────────────────────────────────────┐
+ *   │  PHASE 3: EXECUTE                                  │
+ *   │  Write files, run commands, git operations          │
+ *   └──────────────────┬──────────────────────────────────┘
+ *                      ▼
+ *   ┌─────────────────────────────────────────────────────┐
+ *   │  PHASE 4: VERIFY RESULTS                           │
+ *   │  Run tests, read created files, check for errors    │
+ *   │  If failed → loop back to Phase 3 to fix           │
+ *   └─────────────────────────────────────────────────────┘
+ *
+ * Integrates ALL systems:
+ * - Tool Registry with per-model limits and error recovery
+ * - Human-in-the-loop permissions
+ * - Dynamic Context Compression
+ * - Multi-Model Routing (orchestrator + coder delegation)
+ * - Memory & Project Instructions (.michaelangelo.md)
+ * - MCP external tools (stdio + SSE)
+ * - Lifecycle Hooks & Plugins (error-recovery, linter-hook, memory)
+ * - Sub-Agent spawning via `task` tool
+ * - Semantic Code Search (find_definitions, find_references)
+ * - Workflow Meta-Tools (branch, commit, PR)
  * - Auto-formatting after file writes
- * - Memory, MCP, Skills integration
- * - Dynamic Context Compression (auto-summarize when context is large)
- * - Multi-Model Routing (cheap orchestrator + heavy coder delegation)
- * - Workflow Meta-Tools (branch, commit, PR, tickets)
+ * - LLM retry with exponential backoff
  */
 
 import {
@@ -17,48 +46,84 @@ import {
 import { LifecycleManager } from './lifecycle';
 import { PluginRegistry } from './plugins/registry';
 import { MemoryPlugin } from './plugins/memory-plugin';
+import { ErrorRecoveryPlugin } from './plugins/error-recovery';
+import { LinterHookPlugin } from './plugins/linter-hook';
 import { MCPClientManager } from './mcp/client';
+import { ToolRegistry } from './tools/registry';
 import { TerminalSkill } from './skills/terminal';
 import { FileSystemSkill } from './skills/filesystem';
 import { GitSkill } from './skills/git';
 import { WorkflowMetaTools } from './skills/workflow';
+import { SemanticCodeSearchSkill } from './skills/semantic-search';
 import { MemorySearchSkill, setMemoryStore } from './skills/memory-search';
 import { loadProjectInstructions } from './memory/instructions';
 import { BUILTIN_SKILLS, detectSkillTrigger, expandSkillArgs } from './skills/builtin-skills';
 import { SubAgentManager } from './subagent/manager';
 import { PermissionManager, PermissionRequest } from './permissions';
-import { ContextCompressionEngine, CompressionStats } from './context-compression';
-import { MultiModelRouter, DelegationResult } from './multi-model-router';
+import { ContextCompressionEngine } from './context-compression';
+import { MultiModelRouter } from './multi-model-router';
 
-const AGENT_SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant.
+// ============================================================================
+// SYSTEM PROMPT
+// ============================================================================
 
-Your job: Use your tools to complete the user's task. Do NOT output code blocks — use write_file, edit_file, and run_command instead.
+const AGENT_SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant built with a production-grade agentic harness.
 
-APPROACH:
-1. Read relevant files first to understand the codebase
-2. Make changes using edit_file (for existing files) or write_file (for new files)
-3. Run commands with run_command to test/verify
-4. If something fails, fix it
+## YOUR MISSION
+Complete the user's task by working through 4 phases autonomously. Use your tools — never output code blocks.
 
-TOOLS:
-- read_file: Read a file's contents
-- write_file: Create or overwrite a file
-- edit_file: Edit a file by replacing specific text (preferred for existing files)
-- list_files: List directory contents
-- glob_files: Find files by pattern
-- search_files: Search text across files
-- run_command: Execute a shell command
-- git_status, git_diff, git_add, git_commit, git_log, git_branch: Git operations
-- create_branch, commit_changes, open_pull_request, update_ticket_status: Workflow tools
-- delegate_complex_code: Offload complex refactors to a more capable model
+## THE 4-PHASE LOOP
 
-RULES:
-- ALWAYS use tools. Never just show code.
-- Always verify by reading files or running tests after changes.
-- If a command fails, read the error and fix it.
+### Phase 1: GATHER CONTEXT
+Before making any changes, understand the codebase:
+- Use list_files / glob_files to explore the project structure
+- Use read_file to read relevant existing files
+- Use find_definitions / find_references to understand code relationships
+- Use search_files to locate related patterns
+
+### Phase 2: PLAN
+Based on gathered context, formulate a concrete plan:
+- Identify exactly which files need to change
+- Determine the order of changes (dependencies first)
+- Consider edge cases and error handling
+- You can delegate complex sub-tasks using the task tool
+
+### Phase 3: EXECUTE
+Make the changes:
+- Use write_file for new files
+- Use edit_file for modifying existing files (preferred — surgical edits)
+- Use run_command to install deps, run builds, etc.
+- Use git tools for version control
+
+### Phase 4: VERIFY
+After executing, verify your work:
+- Read the files you created/modified to confirm correctness
+- Run tests with run_command
+- If verification fails → go back to Phase 3 and fix
+- Only return to the user when verification passes
+
+## TOOLS AVAILABLE
+**File System:** read_file, write_file, edit_file, list_files, glob_files, search_files
+**Semantic Search:** find_definitions, find_references, find_implementations, call_graph
+**Terminal:** run_command
+**Git:** git_status, git_diff, git_add, git_commit, git_log, git_branch
+**Workflow:** create_branch, commit_changes, open_pull_request, update_ticket_status
+**Agent:** task (spawn sub-agents for parallel work), delegate_complex_code (offload to frontier model)
+**Memory:** search_memory
+
+## RULES
+- ALWAYS use tools. Never just show code or plans.
+- Prefer edit_file over write_file for existing files.
+- Always verify after executing (Phase 4).
+- If something fails, diagnose and fix it — don't give up.
+- Use task tool when you need parallel analysis of multiple files.
 - Use delegate_complex_code for complex multi-file refactors.
 - Your workspace is: {{WORKSPACE}}
 {{PROJECT_INSTRUCTIONS}}`;
+
+// ============================================================================
+// ORCHESTRATOR
+// ============================================================================
 
 export class Orchestrator {
   private config: OrchestratorConfig;
@@ -66,11 +131,13 @@ export class Orchestrator {
   private plugins: PluginRegistry;
   private mcp: MCPClientManager;
   private memoryPlugin: MemoryPlugin;
+  private errorRecoveryPlugin: ErrorRecoveryPlugin;
+  private linterHookPlugin: LinterHookPlugin;
   private subAgentManager: SubAgentManager;
   private permissionManager: PermissionManager;
   private compressionEngine: ContextCompressionEngine;
   private multiModelRouter?: MultiModelRouter;
-  private internalSkills: AgentSkill[];
+  private toolRegistry: ToolRegistry;
   private sessionId: string;
   private projectInstructions: string = '';
   private onPermissionRequest?: (request: PermissionRequest) => void;
@@ -84,9 +151,19 @@ export class Orchestrator {
     this.subAgentManager = new SubAgentManager(config);
     this.permissionManager = new PermissionManager();
     this.compressionEngine = new ContextCompressionEngine({ tokenThreshold: 8000 });
-    this.internalSkills = [TerminalSkill, FileSystemSkill, GitSkill, WorkflowMetaTools];
+    this.toolRegistry = new ToolRegistry({ enableRetries: true, maxRetries: 2 });
+
+    // Configure per-model tool limits (Llama 3.1 on NIM works best with ≤12)
+    this.toolRegistry.setModelLimit('meta/llama-3.1-8b-instruct', 10);
+    this.toolRegistry.setModelLimit('meta/llama-3.1-70b-instruct', 12);
+
     this.memoryPlugin = new MemoryPlugin(config.workspace);
+    this.errorRecoveryPlugin = new ErrorRecoveryPlugin();
+    this.linterHookPlugin = new LinterHookPlugin();
+
     this.plugins.add(this.memoryPlugin);
+    this.plugins.add(this.errorRecoveryPlugin);
+    this.plugins.add(this.linterHookPlugin);
   }
 
   setPermissionHandler(handler: (request: PermissionRequest) => void): void {
@@ -98,9 +175,6 @@ export class Orchestrator {
     this.permissionManager.resolvePermission({ requestId, action, alwaysAllow });
   }
 
-  /**
-   * Configure multi-model routing (orchestrator + coder).
-   */
   setMultiModelRouter(router: MultiModelRouter): void {
     this.multiModelRouter = router;
   }
@@ -109,52 +183,71 @@ export class Orchestrator {
     await this.memoryPlugin.init();
     setMemoryStore(this.memoryPlugin.getStore().getAll());
     this.projectInstructions = await loadProjectInstructions(this.config.workspace) || '';
+
+    // Register all internal skills with the tool registry
+    const skills = [TerminalSkill, FileSystemSkill, GitSkill, WorkflowMetaTools, SemanticCodeSearchSkill];
+    for (const skill of skills) {
+      this.toolRegistry.registerSkill(skill);
+    }
+    this.toolRegistry.registerSkill(MemorySearchSkill);
+
+    // Validate tool definitions
+    const validation = this.toolRegistry.validate();
+    if (validation.invalid.length > 0) {
+      console.warn(`[Orchestrator] ${validation.invalid.length} tools have invalid definitions:`,
+        validation.invalid.map(t => t.name));
+    }
+    console.log(`[Orchestrator] ${validation.valid.length} valid tools registered`);
+
+    // Connect MCP servers
     if (this.config.enableMCP && this.config.mcpServers) {
       for (const server of this.config.mcpServers) {
         try { await this.mcp.connect(server); } catch (err: any) {
           console.error(`[Orchestrator] MCP failed for ${server.name}:`, err.message);
         }
       }
-    }
-    console.log(`[Orchestrator] Initialized (session: ${this.sessionId})`);
-  }
-
-  async shutdown(): Promise<void> {
-    this.subAgentManager.cancelAll();
-    await this.mcp.disconnectAll();
-  }
-
-  private buildTools(): Map<string, AgentTool> {
-    const tools = new Map<string, AgentTool>();
-    for (const skill of this.internalSkills) {
-      for (const def of skill.tools) {
-        tools.set(def.function.name, {
-          name: def.function.name, description: def.function.description, definition: def,
-          execute: (args, ctx) => skill.execute(def.function.name, args, ctx),
-          source: 'internal',
+      // Register MCP tools
+      for (const mcpTool of this.mcp.getAllTools()) {
+        const fnName = mcpTool.function.function.name;
+        this.toolRegistry.register({
+          name: fnName,
+          description: mcpTool.function.function.description,
+          definition: mcpTool.function,
+          execute: (args) => this.mcp.callTool(mcpTool.serverId, fnName.split('__')[1], args)
+            .then(output => ({ success: true, output })),
+          source: 'mcp',
+          mcpServerId: mcpTool.serverId,
         });
       }
     }
-    for (const def of MemorySearchSkill.tools) {
-      tools.set(def.function.name, {
-        name: def.function.name, description: def.function.description, definition: def,
-        execute: (args, ctx) => MemorySearchSkill.execute(def.function.name, args, ctx),
-        source: 'internal',
-      });
-    }
-    for (const mcpTool of this.mcp.getAllTools()) {
-      const fnName = mcpTool.function.function.name;
-      tools.set(fnName, {
-        name: fnName, description: mcpTool.function.function.description, definition: mcpTool.function,
-        execute: (args) => this.mcp.callTool(mcpTool.serverId, fnName.split('__')[1], args).then(output => ({ success: true, output })),
-        source: 'mcp', mcpServerId: mcpTool.serverId,
-      });
-    }
 
-    // Add delegate_complex_code tool if multi-model router is configured
+    // Register sub-agent task tool
+    this.toolRegistry.register({
+      name: 'task',
+      description: 'Spawn a background sub-agent for parallel work.',
+      definition: {
+        type: 'function',
+        function: {
+          name: 'task',
+          description: 'Spawn a background sub-agent to work on a specific sub-task in parallel.',
+          parameters: {
+            type: 'object',
+            properties: {
+              description: { type: 'string', description: 'Brief description of what this sub-agent should do' },
+              prompt: { type: 'string', description: 'The full task prompt for the sub-agent' },
+            },
+            required: ['description', 'prompt'],
+          },
+        },
+      },
+      execute: async (args) => this.handleTaskSpawn(args),
+      source: 'internal',
+    });
+
+    // Register delegate_complex_code tool
     if (this.multiModelRouter) {
       const delegateDef = this.multiModelRouter.getDelegateToolDefinition();
-      tools.set('delegate_complex_code', {
+      this.toolRegistry.register({
         name: 'delegate_complex_code',
         description: delegateDef.function.description,
         definition: delegateDef,
@@ -163,9 +256,11 @@ export class Orchestrator {
       });
     }
 
+    // Register built-in skills
     for (const skill of BUILTIN_SKILLS) {
-      tools.set(`skill_${skill.name}`, {
-        name: `skill_${skill.name}`, description: skill.description,
+      this.toolRegistry.register({
+        name: `skill_${skill.name}`,
+        description: skill.description,
         definition: {
           type: 'function',
           function: {
@@ -181,13 +276,13 @@ export class Orchestrator {
           const results: string[] = [];
           for (const step of skill.steps) {
             const expandedArgs = expandSkillArgs(step.args, args);
-            const tool = tools.get(step.action);
+            const tool = this.toolRegistry.get(step.action);
             if (tool) {
               const ctx: ExecutionContext = {
                 sessionId: this.sessionId, workspace: this.config.workspace, model: this.config.model,
-                messages: [], iteration: 0, maxIterations: 1, tools, metadata: {},
+                messages: [], iteration: 0, maxIterations: 1, tools: this.toolRegistry.getAll(), metadata: {},
               };
-              const result = await tool.execute(expandedArgs, ctx);
+              const result = await this.toolRegistry.execute(step.action, expandedArgs, ctx);
               results.push(result.output || result.error || '');
             }
           }
@@ -196,76 +291,129 @@ export class Orchestrator {
         source: 'skill',
       });
     }
-    return tools;
+
+    console.log(`[Orchestrator] Initialized (session: ${this.sessionId}) — ${this.toolRegistry.size()} tools`);
   }
 
-  /**
-   * Handle delegation to the coder model.
-   */
+  async shutdown(): Promise<void> {
+    this.subAgentManager.cancelAll();
+    await this.mcp.disconnectAll();
+  }
+
+  // ==========================================================================
+  // TOOL HANDLERS
+  // ==========================================================================
+
+  private async handleTaskSpawn(args: Record<string, any>): Promise<ToolResult> {
+    const { description, prompt } = args;
+    if (!description || !prompt) {
+      return { success: false, output: '', error: 'Both description and prompt are required' };
+    }
+    const taskId = this.subAgentManager.spawnSubAgent(description, prompt, this.config.workspace);
+    return {
+      success: true,
+      output: `Sub-agent spawned: ${taskId}\nTask: ${description}\nThe sub-agent is running in the background.`,
+    };
+  }
+
   private async handleDelegation(args: Record<string, any>): Promise<ToolResult> {
     if (!this.multiModelRouter) {
       return { success: false, output: '', error: 'No multi-model router configured' };
     }
-
     const files: { path: string; content: string }[] = [];
     if (args.files) {
-      const filePaths = args.files.split(',').map((f: string) => f.trim());
-      for (const fp of filePaths) {
-        files.push({ path: fp, content: '' }); // Will be read by router
+      for (const fp of args.files.split(',').map((f: string) => f.trim())) {
+        files.push({ path: fp, content: '' });
       }
     }
-
     const result = await this.multiModelRouter.delegateComplexCode({
-      task: args.task,
-      files,
-      language: args.language,
-      constraints: args.constraints,
-    }, new Map()); // Tools map not needed — router reads files itself
+      task: args.task, files, language: args.language, constraints: args.constraints,
+    }, this.toolRegistry.getAll());
 
     if (result.success) {
-      // Write the delegated files using FileSystem skill
       const fs = require('fs');
       const pathMod = require('path');
       for (const file of result.filesChanged) {
         try {
           const fullPath = pathMod.resolve(this.config.workspace, file.path);
-          const dir = pathMod.dirname(fullPath);
-          fs.mkdirSync(dir, { recursive: true });
+          fs.mkdirSync(pathMod.dirname(fullPath), { recursive: true });
           fs.writeFileSync(fullPath, file.content, 'utf-8');
-          console.log(`[Orchestrator] Delegated file written: ${file.path}`);
         } catch (err: any) {
-          console.error(`[Orchestrator] Failed to write delegated file ${file.path}:`, err.message);
+          console.error(`[Orchestrator] Delegated write failed: ${file.path}:`, err.message);
         }
       }
-
-      return {
-        success: true,
-        output: `Coder model generated code:\n\n${result.explanation}\n\nFiles written:\n${result.filesChanged.map(f => `  - ${f.path}`).join('\n')}`,
-      };
+      return { success: true, output: `Coder model generated:\n${result.explanation}\n\nFiles:\n${result.filesChanged.map(f => `  - ${f.path}`).join('\n')}` };
     }
-
     return { success: false, output: '', error: result.error || result.explanation };
   }
 
+  // ==========================================================================
+  // LLM CALL WITH RETRY
+  // ==========================================================================
+
   private async callLLM(messages: ChatMessage[], tools: Map<string, AgentTool>): Promise<any> {
     const body: any = { model: this.config.model, messages, max_tokens: 4096, temperature: 0.3 };
-    const toolDefs = Array.from(tools.values()).map(t => t.definition);
-    if (toolDefs.length > 0) { body.tools = toolDefs; body.tool_choice = 'auto'; }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
-    try {
-      const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `${this.config.authPrefix}${this.config.apiKey}` },
-        body: JSON.stringify(body),
-        signal: this.config.abortSignal || controller.signal,
-      });
-      clearTimeout(timeout);
-      if (!response.ok) throw new Error(`API ${response.status}: ${await response.text().catch(() => '')}`);
-      return await response.json();
-    } catch (err: any) { clearTimeout(timeout); throw err; }
+    // Use per-model tool limits from registry
+    const allDefs = Array.from(tools.values()).map(t => t.definition);
+    const modelDefs = this.toolRegistry.getForModel(this.config.model);
+    body.tools = modelDefs.length > 0 ? modelDefs : allDefs.slice(0, 12);
+    if (body.tools.length > 0) body.tool_choice = 'auto';
+
+    // Retry with exponential backoff
+    const MAX_LLM_RETRIES = 3;
+    let lastError: any;
+
+    for (let attempt = 0; attempt < MAX_LLM_RETRIES; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+
+      try {
+        const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `${this.config.authPrefix}${this.config.apiKey}` },
+          body: JSON.stringify(body),
+          signal: this.config.abortSignal || controller.signal,
+        });
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          const errBody = await response.text().catch(() => '');
+          const err = new Error(`API ${response.status}: ${errBody}`);
+
+          // Retry on 429 (rate limit) or 5xx (server error)
+          if ((response.status === 429 || response.status >= 500) && attempt < MAX_LLM_RETRIES - 1) {
+            const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+            console.log(`[Orchestrator] LLM ${response.status}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_LLM_RETRIES})`);
+            await new Promise(r => setTimeout(r, delay));
+            lastError = err;
+            continue;
+          }
+          throw err;
+        }
+
+        return await response.json();
+      } catch (err: any) {
+        clearTimeout(timeout);
+        lastError = err;
+
+        // Retry on network errors
+        if (err.name === 'AbortError' && attempt < MAX_LLM_RETRIES - 1) {
+          const delay = 2000 * (attempt + 1);
+          console.log(`[Orchestrator] LLM timeout, retrying in ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    throw lastError;
   }
+
+  // ==========================================================================
+  // TOOL EXECUTION with permissions, hooks, and auto-formatting
+  // ==========================================================================
 
   private async executeTool(toolCall: ToolCall, tools: Map<string, AgentTool>, ctx: ExecutionContext): Promise<ToolResult> {
     const agentTool = tools.get(toolCall.function.name);
@@ -285,7 +433,7 @@ export class Orchestrator {
       }
     }
 
-    // Hooks
+    // Pre-action hooks
     const hookCtx: HookContext = {
       sessionId: this.sessionId, workspace: this.config.workspace, model: this.config.model,
       messages: ctx.messages, toolCall, metadata: { iteration: ctx.iteration },
@@ -295,32 +443,16 @@ export class Orchestrator {
     console.log(`[Orchestrator] Tool: ${toolCall.function.name}`);
     const result = await agentTool.execute(args, ctx);
 
+    // Post-action hooks
     hookCtx.toolResult = result;
     await this.lifecycle.fire('onPostToolUse', hookCtx);
-
-    // Auto-format after file writes
-    if ((toolCall.function.name === 'write_file' || toolCall.function.name === 'edit_file') && result.success) {
-      await this.runPostActionHooks(toolCall.function.name, args, ctx);
-    }
 
     return result;
   }
 
-  private async runPostActionHooks(toolName: string, args: Record<string, any>, ctx: ExecutionContext): Promise<void> {
-    if (!args.file_path) return;
-    const ext = args.file_path.split('.').pop()?.toLowerCase();
-    const formatters: Record<string, string> = {
-      ts: 'npx prettier --write', tsx: 'npx prettier --write', js: 'npx prettier --write',
-      jsx: 'npx prettier --write', json: 'npx prettier --write', css: 'npx prettier --write',
-      md: 'npx prettier --write',
-    };
-    if (ext && formatters[ext]) {
-      try {
-        const terminal = this.internalSkills.find(s => s.name === 'terminal');
-        if (terminal) await terminal.execute('run_command', { command: `${formatters[ext]} "${args.file_path}"`, cwd: this.config.workspace }, ctx);
-      } catch { /* formatter not available */ }
-    }
-  }
+  // ==========================================================================
+  // SYSTEM PROMPT
+  // ==========================================================================
 
   private buildSystemPrompt(): string {
     let prompt = AGENT_SYSTEM_PROMPT.replace('{{WORKSPACE}}', this.config.workspace);
@@ -336,6 +468,10 @@ export class Orchestrator {
     return prompt;
   }
 
+  // ==========================================================================
+  // THE 4-PHASE EXECUTION LOOP
+  // ==========================================================================
+
   async execute(userMessages: ChatMessage[]): Promise<OrchestratorResult> {
     const maxIterations = this.config.maxIterations || 15;
     const toolExecutions: OrchestratorResult['toolExecutions'] = [];
@@ -344,8 +480,8 @@ export class Orchestrator {
     allMessages.push({ role: 'system', content: this.buildSystemPrompt() });
     allMessages.push(...userMessages);
 
-    const tools = this.buildTools();
-    console.log(`[Orchestrator] ${tools.size} tools available`);
+    const tools = this.toolRegistry.getAll();
+    console.log(`[Orchestrator] ${tools.size} tools available (model limit: ${this.toolRegistry.getForModel(this.config.model).length})`);
 
     const hookCtx = this.createHookContext(allMessages);
     await this.lifecycle.fire('onSessionStart', hookCtx);
@@ -354,35 +490,54 @@ export class Orchestrator {
     const lastUserMsg = userMessages.filter(m => m.role === 'user').pop();
     if (lastUserMsg?.content) detectSkillTrigger(lastUserMsg.content);
 
-    let iterations = 0;
+    let currentPhase: AgentPhase = 'gather_context';
+    let phaseIterations = 0;
+    let totalIterations = 0;
     let consecutiveNoToolCalls = 0;
     let totalCompressionSavings = 0;
+    const phaseHistory: { phase: AgentPhase; iteration: number; toolsUsed: string[] }[] = [];
 
-    while (iterations < maxIterations) {
-      if (this.config.abortSignal?.aborted) { console.log(`[Orchestrator] Aborted`); break; }
-      iterations++;
-      console.log(`[Orchestrator] Iter ${iterations}/${maxIterations}`);
+    const MAX_PHASE_ITERATIONS: Record<AgentPhase, number> = {
+      gather_context: 3, plan: 2, execute: 10, verify_results: 3,
+    };
 
-      // === CONTEXT COMPRESSION CHECK ===
+    const PHASE_INSTRUCTIONS: Record<AgentPhase, string> = {
+      gather_context: '[PHASE: GATHER CONTEXT] Read files, explore structure, understand the task. Use read_file, list_files, find_definitions, search_files.',
+      plan: '[PHASE: PLAN] Formulate a concrete plan. Identify files to change and their order. Use task tool for parallel analysis.',
+      execute: '[PHASE: EXECUTE] Make changes using write_file, edit_file, run_command. Work step by step.',
+      verify_results: '[PHASE: VERIFY] Read modified files, run tests. If issues found, loop back to execute. Only answer when verified.',
+    };
+
+    console.log(`[Orchestrator] Starting 4-phase loop (max ${maxIterations} iterations)`);
+
+    while (totalIterations < maxIterations) {
+      if (this.config.abortSignal?.aborted) break;
+
+      totalIterations++;
+      phaseIterations++;
+
+      console.log(`[Orchestrator] Phase: ${currentPhase} | Iter: ${totalIterations}/${maxIterations}`);
+
+      // Context compression
       const analysis = this.compressionEngine.analyze(allMessages);
       if (analysis.needsCompression) {
-        console.log(`[Orchestrator] Context at ${analysis.totalTokens} tokens, compressing...`);
         try {
-          const { messages: compressed, stats } = await this.compressionEngine.maybeCompress(
-            allMessages,
-            // Use LLM-based compression if we have a coder model or just naive
-            undefined,
-          );
+          const { messages: compressed, stats } = await this.compressionEngine.maybeCompress(allMessages);
           if (stats.triggered) {
             allMessages.length = 0;
             allMessages.push(...compressed);
             totalCompressionSavings += stats.totalTokensBefore - stats.totalTokensAfter;
           }
-        } catch (err: any) {
-          console.error(`[Orchestrator] Compression failed:`, err.message);
-        }
+        } catch (err: any) { console.error(`[Orchestrator] Compression failed:`, err.message); }
       }
 
+      // Inject phase instruction
+      const lastMsg = allMessages[allMessages.length - 1];
+      if (!lastMsg?.content?.includes('[PHASE:')) {
+        allMessages.push({ role: 'system', content: PHASE_INSTRUCTIONS[currentPhase] });
+      }
+
+      // Call LLM
       const response = await this.callLLM(allMessages, tools);
       const choice = response.choices?.[0];
       if (!choice) throw new Error('No response from LLM');
@@ -392,30 +547,80 @@ export class Orchestrator {
 
       if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
         consecutiveNoToolCalls++;
+        if (currentPhase === 'verify_results' && consecutiveNoToolCalls >= 1) break;
         if (consecutiveNoToolCalls >= 2) {
-          console.log(`[Orchestrator] Complete after ${iterations} iterations (no tool calls)`);
+          const nextPhase = this.getNextPhase(currentPhase);
+          if (nextPhase) {
+            phaseHistory.push({ phase: currentPhase, iteration: totalIterations, toolsUsed: [] });
+            currentPhase = nextPhase;
+            phaseIterations = 0;
+            consecutiveNoToolCalls = 0;
+            continue;
+          }
           break;
         }
         continue;
       }
+
       consecutiveNoToolCalls = 0;
 
+      // Execute tool calls
       const ctx: ExecutionContext = {
         sessionId: this.sessionId, workspace: this.config.workspace, model: this.config.model,
-        messages: allMessages, iteration: iterations, maxIterations, tools,
-        metadata: {}, projectInstructions: this.projectInstructions,
+        messages: allMessages, iteration: totalIterations, maxIterations, tools,
+        metadata: { phase: currentPhase, phaseIteration: phaseIterations },
+        projectInstructions: this.projectInstructions,
         abortSignal: this.config.abortSignal, permissionManager: this.permissionManager,
       };
 
+      const phaseToolsUsed: string[] = [];
       for (const toolCall of assistantMsg.tool_calls) {
         const result = await this.executeTool(toolCall, tools, ctx);
-        toolExecutions.push({ tool: toolCall.function.name, result: result.output || result.error || '', duration_ms: result.duration_ms || 0, phase: 'execute' });
+        toolExecutions.push({
+          tool: toolCall.function.name, result: result.output || result.error || '',
+          duration_ms: result.duration_ms || 0, phase: currentPhase,
+        });
         allMessages.push({ role: 'tool', content: result.output || result.error || '(no output)', tool_call_id: toolCall.id });
+        phaseToolsUsed.push(toolCall.function.name);
       }
 
-      await this.lifecycle.fire('onPhaseComplete', this.createHookContext(allMessages, { iterations }));
+      await this.lifecycle.fire('onPhaseComplete', this.createHookContext(allMessages, { iterations: totalIterations, phase: currentPhase }));
+
+      // Phase transitions
+      if (phaseIterations >= MAX_PHASE_ITERATIONS[currentPhase]) {
+        const nextPhase = this.getNextPhase(currentPhase);
+        if (nextPhase) {
+          phaseHistory.push({ phase: currentPhase, iteration: totalIterations, toolsUsed: phaseToolsUsed });
+          currentPhase = nextPhase;
+          phaseIterations = 0;
+        }
+      }
+
+      if (currentPhase === 'gather_context' && phaseToolsUsed.some(t => ['read_file', 'list_files', 'find_definitions', 'search_files'].includes(t)) && phaseIterations >= 2) {
+        phaseHistory.push({ phase: currentPhase, iteration: totalIterations, toolsUsed: phaseToolsUsed });
+        currentPhase = 'plan'; phaseIterations = 0;
+      }
+
+      if (currentPhase === 'plan' && (phaseToolsUsed.some(t => ['write_file', 'edit_file', 'run_command', 'task'].includes(t)) || phaseIterations >= 2)) {
+        phaseHistory.push({ phase: currentPhase, iteration: totalIterations, toolsUsed: phaseToolsUsed });
+        currentPhase = 'execute'; phaseIterations = 0;
+      }
+
+      if (currentPhase === 'execute' && phaseToolsUsed.some(t => ['write_file', 'edit_file', 'run_command'].includes(t)) && phaseIterations >= 2) {
+        phaseHistory.push({ phase: currentPhase, iteration: totalIterations, toolsUsed: phaseToolsUsed });
+        currentPhase = 'verify_results'; phaseIterations = 0;
+      }
+
+      if (currentPhase === 'verify_results' && phaseIterations >= 1) {
+        const lastToolResult = toolExecutions[toolExecutions.length - 1];
+        if (lastToolResult && (lastToolResult.result.includes('ERROR') || lastToolResult.result.includes('FAIL'))) {
+          phaseHistory.push({ phase: currentPhase, iteration: totalIterations, toolsUsed: phaseToolsUsed });
+          currentPhase = 'execute'; phaseIterations = 0;
+        }
+      }
     }
 
+    // Session end
     await this.lifecycle.fire('onSessionEnd', this.createHookContext(allMessages));
 
     if (this.config.enableMemory) {
@@ -431,15 +636,16 @@ export class Orchestrator {
     }
 
     return {
-      messages: allMessages,
-      iterations,
-      toolExecutions,
-      memoryEntries: [],
-      compressionStats: {
-        compressed: this.compressionEngine.getCompressionCount(),
-        tokensSaved: totalCompressionSavings,
-      },
+      messages: allMessages, iterations: totalIterations, toolExecutions, memoryEntries: [],
+      compressionStats: { compressed: this.compressionEngine.getCompressionCount(), tokensSaved: totalCompressionSavings },
+      phaseHistory,
     };
+  }
+
+  private getNextPhase(current: AgentPhase): AgentPhase | null {
+    const order: AgentPhase[] = ['gather_context', 'plan', 'execute', 'verify_results'];
+    const idx = order.indexOf(current);
+    return idx < order.length - 1 ? order[idx + 1] : null;
   }
 
   private createHookContext(messages: ChatMessage[], extra?: Record<string, any>): HookContext {

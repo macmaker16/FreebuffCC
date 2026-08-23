@@ -1,25 +1,27 @@
 /**
- * Michaelangelo - Express Proxy Server with Agentic Tool Execution
+ * Michaelangelo - Express Proxy Server with Full Claude Code Capabilities
  * 
- * This server:
- * 1. Proxies chat requests to OpenRouter or Nvidia NIM
- * 2. Implements an agentic loop for autonomous tool execution
- * 3. Securely executes file operations and terminal commands
- * 4. Manages API keys via electron-store
- * 
- * The agentic loop allows the AI to:
- * - Write files to disk
- * - Read files from disk
- * - Execute terminal commands
- * - Loop until task completion
+ * Features:
+ * 1. Multi-provider chat proxy (OpenRouter, NIM, OpenAI, etc.)
+ * 2. Agentic tool execution with 4-phase loop
+ * 3. Conversation persistence (save/load/search sessions)
+ * 4. Streaming responses with tool execution events
+ * 5. Slash command routing (/compact, /clear, /help, /cost, etc.)
+ * 6. Token/cost tracking
+ * 7. Auto-project detection
+ * 8. Permission approval system
  */
 
 import express, { Request, Response } from 'express';
 import Store from 'electron-store';
 import { Orchestrator, MultiModelRouter } from './agent';
+import { ConversationStore, ConversationMessage } from './conversations';
+import { SlashCommandHandler } from './agent/slash-commands';
+import { TokenTracker } from './agent/token-tracker';
+import { ProjectDetector } from './agent/project-detection';
 import { exec } from 'child_process';
 import { readFile, writeFile, mkdir, access } from 'fs/promises';
-import { dirname, resolve, isAbsolute } from 'path';
+import { dirname, resolve, isAbsolute, join } from 'path';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
@@ -47,10 +49,7 @@ interface SettingsStore {
 interface ToolCall {
   id: string;
   type: 'function';
-  function: {
-    name: string;
-    arguments: string;
-  };
+  function: { name: string; arguments: string };
 }
 
 interface ChatMessage {
@@ -62,136 +61,40 @@ interface ChatMessage {
 }
 
 // ============================================================================
-// SETTINGS STORE
+// STORE & SERVICES
 // ============================================================================
 
 const store = new Store<SettingsStore>({
   defaults: {
-    openrouterApiKey: '',
-    nvidiaNimApiKey: '',
-    openaiApiKey: '',
-    anthropicApiKey: '',
-    deepseekApiKey: '',
-    geminiApiKey: '',
-    groqApiKey: '',
-    togetherApiKey: '',
-    mistralApiKey: '',
-    cohereApiKey: '',
-    localLlmEndpoint: 'http://localhost:11434/v1',
-    localLlmApiKey: 'ollama',
+    openrouterApiKey: '', nvidiaNimApiKey: '', openaiApiKey: '', anthropicApiKey: '',
+    deepseekApiKey: '', geminiApiKey: '', groqApiKey: '', togetherApiKey: '',
+    mistralApiKey: '', cohereApiKey: '',
+    localLlmEndpoint: 'http://localhost:11434/v1', localLlmApiKey: 'ollama',
     workspace: '',
   },
 });
 
-// ============================================================================
-// SECURITY CONSTANTS
-// ============================================================================
+// Global service instances (initialized once)
+let conversationStore: ConversationStore;
+let slashHandler: SlashCommandHandler;
+let tokenTracker: TokenTracker;
+let projectDetector: ProjectDetector;
 
-/**
- * Working directory for all file operations.
- * Reads from electron-store; falls back to cwd.
- */
 function getWorkspaceDir(): string {
   return store.get('workspace') || process.cwd();
 }
 
-/**
- * Maximum number of agentic loop iterations to prevent infinite loops.
- */
 const MAX_ITERATIONS = 20;
 
-/**
- * Blocked commands that should never be executed for safety.
- */
 const BLOCKED_COMMANDS = [
-  'rm -rf /',
-  'rm -rf /*',
-  'mkfs',
-  'dd if=',
-  'format',
-  ':(){:|:&};:',
-  'chmod -R 777 /',
-  'chown -R',
-  '> /dev/sda',
-];
-
-// ============================================================================
-// TOOL DEFINITIONS (OpenAI-compatible format)
-// ============================================================================
-
-/**
- * Tool definitions sent to the LLM.
- * These tell the model what actions it can take.
- */
-const TOOL_DEFINITIONS = [
-  {
-    type: 'function',
-    function: {
-      name: 'write_file',
-      description: 'Write content to a file. Creates the file if it does not exist, overwrites if it does. Creates parent directories automatically.',
-      parameters: {
-        type: 'object',
-        properties: {
-          file_path: {
-            type: 'string',
-            description: 'Path to the file (relative to workspace or absolute)',
-          },
-          content: {
-            type: 'string',
-            description: 'The content to write to the file',
-          },
-        },
-        required: ['file_path', 'content'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'read_file',
-      description: 'Read the contents of a file.',
-      parameters: {
-        type: 'object',
-        properties: {
-          file_path: {
-            type: 'string',
-            description: 'Path to the file (relative to workspace or absolute)',
-          },
-        },
-        required: ['file_path'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'run_command',
-      description: 'Execute a terminal/shell command. Returns stdout and stderr. Use this to install packages, run builds, start servers, run tests, etc.',
-      parameters: {
-        type: 'object',
-        properties: {
-          command: {
-            type: 'string',
-            description: 'The shell command to execute',
-          },
-          cwd: {
-            type: 'string',
-            description: 'Working directory for the command (optional, defaults to workspace)',
-          },
-        },
-        required: ['command'],
-      },
-    },
-  },
+  'rm -rf /', 'rm -rf /*', 'mkfs', 'dd if=', 'format',
+  ':(){:|:&};:', 'chmod -R 777 /', 'chown -R', '> /dev/sda',
 ];
 
 // ============================================================================
 // SYSTEM PROMPT
 // ============================================================================
 
-/**
- * System prompt that forces the model to use tools for autonomous coding.
- */
 const SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant. You have access to tools that let you interact with the user's filesystem and terminal.
 
 YOUR JOB: When the user asks you to build, create, fix, or modify software, you MUST use your tools to actually do the work. Do NOT just output plans or code blocks — actually execute them.
@@ -213,743 +116,444 @@ RULES:
 - Be thorough — complete the entire task before stopping.
 - When using run_command, prefer short, focused commands over long chains.
 - Your workspace is: {{WORKSPACE}}
+{{PROJECT_CONTEXT}}
 
 IMPORTANT: You MUST call tools. Do NOT output code blocks as your response. Use write_file to create files, and run_command to execute them.`;
 
-// The system prompt is regenerated per request to include the current workspace
-function getSystemPrompt(): string {
+function getSystemPrompt(projectContext: string = ''): string {
   const workspace = getWorkspaceDir();
-  return SYSTEM_PROMPT.replace('{{WORKSPACE}}', workspace);
+  let prompt = SYSTEM_PROMPT.replace('{{WORKSPACE}}', workspace);
+  if (projectContext) {
+    prompt = prompt.replace('{{PROJECT_CONTEXT}}', '\n' + projectContext);
+  } else {
+    prompt = prompt.replace('{{PROJECT_CONTEXT}}', '');
+  }
+  return prompt;
 }
 
 // ============================================================================
-// TOOL EXECUTION FUNCTIONS
+// TOOL EXECUTION
 // ============================================================================
 
-/**
- * Resolves a file path relative to the workspace directory.
- */
 function resolvePath(filePath: string): string {
   const workspace = getWorkspaceDir();
-  if (isAbsolute(filePath)) {
-    return resolve(filePath);
-  }
-  return resolve(workspace, filePath);
+  return isAbsolute(filePath) ? resolve(filePath) : resolve(workspace, filePath);
 }
 
-/**
- * Validates that a path is within the workspace (security check).
- */
 function isPathSafe(filePath: string): boolean {
-  const resolved = resolvePath(filePath);
-  const workspace = resolve(getWorkspaceDir());
-  return resolved.startsWith(workspace);
+  return resolvePath(filePath).startsWith(resolve(getWorkspaceDir()));
 }
 
-/**
- * Executes the write_file tool.
- */
 async function executeWriteFile(args: { file_path: string; content: string }): Promise<string> {
-  const { file_path, content } = args;
-  
-  if (!isPathSafe(file_path)) {
-    return `ERROR: Path "${file_path}" is outside the workspace. Use a relative path or a path within ${getWorkspaceDir()}.`;
-  }
-
-  const fullPath = resolvePath(file_path);
-
+  if (!isPathSafe(args.file_path)) return `ERROR: Path outside workspace: ${args.file_path}`;
   try {
-    // Create parent directories if they don't exist
+    const fullPath = resolvePath(args.file_path);
     await mkdir(dirname(fullPath), { recursive: true });
-    
-    // Write the file
-    await writeFile(fullPath, content, 'utf-8');
-    
-    const lines = content.split('\n').length;
-    const bytes = Buffer.byteLength(content, 'utf-8');
-    return `SUCCESS: Wrote ${lines} lines (${bytes} bytes) to ${file_path}`;
-  } catch (err: any) {
-    return `ERROR writing file: ${err.message}`;
-  }
+    await writeFile(fullPath, args.content, 'utf-8');
+    return `SUCCESS: Wrote ${args.content.split('\n').length} lines (${Buffer.byteLength(args.content)} bytes) to ${args.file_path}`;
+  } catch (err: any) { return `ERROR writing file: ${err.message}`; }
 }
 
-/**
- * Executes the read_file tool.
- */
 async function executeReadFile(args: { file_path: string }): Promise<string> {
-  const { file_path } = args;
-  
-  if (!isPathSafe(file_path)) {
-    return `ERROR: Path "${file_path}" is outside the workspace.`;
-  }
-
-  const fullPath = resolvePath(file_path);
-
+  if (!isPathSafe(args.file_path)) return `ERROR: Path outside workspace: ${args.file_path}`;
   try {
-    await access(fullPath);
-    const content = await readFile(fullPath, 'utf-8');
-    
-    // Truncate very large files to avoid token limits
-    if (content.length > 50000) {
-      return content.substring(0, 50000) + '\n\n... [truncated, file is ' + content.length + ' bytes total]';
-    }
-    
-    return content;
+    const content = await readFile(resolvePath(args.file_path), 'utf-8');
+    return content.length > 50000 ? content.substring(0, 50000) + '\n\n... [truncated]' : content || '(empty file)';
   } catch (err: any) {
-    if (err.code === 'ENOENT') {
-      return `ERROR: File not found: ${file_path}`;
-    }
-    return `ERROR reading file: ${err.message}`;
+    return err.code === 'ENOENT' ? `ERROR: File not found: ${args.file_path}` : `ERROR: ${err.message}`;
   }
 }
 
-/**
- * Executes the run_command tool.
- * Runs commands asynchronously with a timeout.
- */
 async function executeRunCommand(args: { command: string; cwd?: string }): Promise<string> {
-  const { command, cwd } = args;
-
-  // Security: Check for blocked commands
-  const lowerCmd = command.toLowerCase().trim();
+  const lowerCmd = args.command.toLowerCase().trim();
   for (const blocked of BLOCKED_COMMANDS) {
-    if (lowerCmd.includes(blocked)) {
-      return `ERROR: Command blocked for safety: "${blocked}"`;
-    }
+    if (lowerCmd.includes(blocked)) return `ERROR: Command blocked for safety: "${blocked}"`;
   }
-
-  const workingDir = cwd ? resolvePath(cwd) : getWorkspaceDir();
-
   try {
-    // Execute with a 60-second timeout
-    const { stdout, stderr } = await execAsync(command, {
-      cwd: workingDir,
-      timeout: 60000,
-      maxBuffer: 1024 * 1024, // 1MB buffer
-      env: { ...process.env, FORCE_COLOR: '0' }, // No color codes in output
+    const { stdout, stderr } = await execAsync(args.command, {
+      cwd: args.cwd ? resolvePath(args.cwd) : getWorkspaceDir(),
+      timeout: 60000, maxBuffer: 1024 * 1024,
+      env: { ...process.env, FORCE_COLOR: '0' },
     });
-
     let result = '';
     if (stdout) result += stdout;
     if (stderr) result += (result ? '\n--- STDERR ---\n' : '') + stderr;
-    
-    if (!result.trim()) {
-      result = '(command completed with no output)';
-    }
-
-    // Truncate very long output
-    if (result.length > 10000) {
-      result = result.substring(0, 10000) + '\n\n... [output truncated]';
-    }
-
-    return result;
+    if (!result.trim()) result = '(no output)';
+    return result.length > 10000 ? result.substring(0, 10000) + '\n\n... [truncated]' : result;
   } catch (err: any) {
-    let errorMsg = `COMMAND FAILED: ${err.message}`;
-    if (err.stdout) errorMsg += `\n--- STDOUT ---\n${err.stdout}`;
-    if (err.stderr) errorMsg += `\n--- STDERR ---\n${err.stderr}`;
-    
-    // Truncate error output
-    if (errorMsg.length > 10000) {
-      errorMsg = errorMsg.substring(0, 10000) + '\n\n... [error output truncated]';
-    }
-    
-    return errorMsg;
+    let msg = `COMMAND FAILED: ${err.message}`;
+    if (err.stdout) msg += `\n--- STDOUT ---\n${err.stdout}`;
+    if (err.stderr) msg += `\n--- STDERR ---\n${err.stderr}`;
+    return msg.length > 10000 ? msg.substring(0, 10000) + '\n\n... [truncated]' : msg;
   }
 }
 
-/**
- * Dispatches a tool call to the appropriate execution function.
- */
 async function executeTool(toolCall: ToolCall): Promise<string> {
-  const { name, arguments: argsStr } = toolCall.function;
-  
   let args: any;
+  try { args = JSON.parse(toolCall.function.arguments); } catch { return `ERROR: Failed to parse tool arguments`; }
+  switch (toolCall.function.name) {
+    case 'write_file': return executeWriteFile(args);
+    case 'read_file': return executeReadFile(args);
+    case 'run_command': return executeRunCommand(args);
+    default: return `ERROR: Unknown tool "${toolCall.function.name}"`;
+  }
+}
+
+// ============================================================================
+// LLM CALL
+// ============================================================================
+
+async function callLLM(baseUrl: string, apiKey: string, authPrefix: string, model: string, messages: ChatMessage[], tools?: any[]): Promise<any> {
+  const body: any = { model, messages, max_tokens: 4096, temperature: 0.3 };
+  if (tools && tools.length > 0) { body.tools = tools; body.tool_choice = 'auto'; }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
   try {
-    args = JSON.parse(argsStr);
-  } catch {
-    return `ERROR: Failed to parse tool arguments: ${argsStr}`;
-  }
-
-  console.log(`[Agent] Executing tool: ${name}`);
-
-  switch (name) {
-    case 'write_file':
-      return executeWriteFile(args);
-    case 'read_file':
-      return executeReadFile(args);
-    case 'run_command':
-      return executeRunCommand(args);
-    default:
-      return `ERROR: Unknown tool "${name}"`;
-  }
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `${authPrefix}${apiKey}` },
+      body: JSON.stringify(body), signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!response.ok) throw new Error(`API ${response.status}: ${await response.text().catch(() => '')}`);
+    return await response.json();
+  } catch (err: any) { clearTimeout(timeout); throw err; }
 }
 
 // ============================================================================
 // AGENTIC LOOP
 // ============================================================================
 
-/**
- * Calls the LLM API and returns the response.
- */
-async function callLLM(
-  baseUrl: string,
-  apiKey: string,
-  authPrefix: string,
-  model: string,
-  messages: ChatMessage[],
-  tools?: any[],
-): Promise<any> {
-  const body: any = {
-    model,
-    messages,
-    max_tokens: 4096,
-    temperature: 0.3, // Lower temperature for more deterministic tool use
-  };
+const TOOL_DEFINITIONS = [
+  { type: 'function', function: { name: 'write_file', description: 'Write content to a file. Creates parent dirs automatically.', parameters: { type: 'object', properties: { file_path: { type: 'string' }, content: { type: 'string' } }, required: ['file_path', 'content'] } } },
+  { type: 'function', function: { name: 'read_file', description: 'Read file contents.', parameters: { type: 'object', properties: { file_path: { type: 'string' } }, required: ['file_path'] } } },
+  { type: 'function', function: { name: 'run_command', description: 'Execute a shell command.', parameters: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' } }, required: ['command'] } } },
+];
 
-  if (tools && tools.length > 0) {
-    body.tools = tools;
-    body.tool_choice = 'auto'; // Let the model decide when to use tools
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
-
-  try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `${authPrefix}${apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => 'Unknown error');
-      throw new Error(`API returned ${response.status}: ${errBody}`);
-    }
-
-    return await response.json();
-  } catch (err: any) {
-    clearTimeout(timeout);
-    throw err;
-  }
-}
-
-/**
- * The agentic loop:
- * 1. Sends user prompt + tools to the LLM
- * 2. If the LLM returns tool_calls, execute them
- * 3. Append results as tool messages
- * 4. Send back to the LLM
- * 5. Repeat until the LLM returns a final text response
- * 
- * Returns an array of all messages including tool executions.
- */
-async function agenticLoop(
-  baseUrl: string,
-  apiKey: string,
-  authPrefix: string,
-  model: string,
-  userMessages: ChatMessage[],
-  onToolExecution?: (toolName: string, result: string) => void,
-): Promise<{ messages: ChatMessage[]; iterations: number }> {
-  // Start with system prompt + user messages
+async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, model: string, provider: string, userMessages: ChatMessage[], conversationId?: string): Promise<{ messages: ChatMessage[]; iterations: number; tokenUsage: { prompt: number; completion: number } }> {
+  const projectContext = projectDetector ? (await projectDetector.detect()).instructions : '';
   const messages: ChatMessage[] = [
-    { role: 'system', content: getSystemPrompt() },
+    { role: 'system', content: getSystemPrompt(projectContext) },
     ...userMessages,
   ];
 
   let iterations = 0;
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
 
   while (iterations < MAX_ITERATIONS) {
     iterations++;
-    console.log(`[Agent] Iteration ${iterations}/${MAX_ITERATIONS}`);
+    console.log(`[Agent] Iter ${iterations}/${MAX_ITERATIONS}`);
 
-    // Call the LLM with tools
     const response = await callLLM(baseUrl, apiKey, authPrefix, model, messages, TOOL_DEFINITIONS);
     const choice = response.choices?.[0];
+    if (!choice) throw new Error('No response from LLM');
 
-    if (!choice) {
-      throw new Error('No response from LLM');
+    // Track token usage
+    if (response.usage) {
+      totalPromptTokens += response.usage.prompt_tokens || 0;
+      totalCompletionTokens += response.usage.completion_tokens || 0;
     }
 
-    const assistantMessage = choice.message;
+    const assistantMsg = choice.message;
+    messages.push({ role: 'assistant', content: assistantMsg.content, tool_calls: assistantMsg.tool_calls });
 
-    // Add the assistant's response to the conversation
-    messages.push({
-      role: 'assistant',
-      content: assistantMessage.content,
-      tool_calls: assistantMessage.tool_calls,
-    });
-
-    // If no tool calls, we're done — return the final response
-    if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+    if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
       console.log(`[Agent] Completed after ${iterations} iterations`);
-      return { messages, iterations };
+      return { messages, iterations, tokenUsage: { prompt: totalPromptTokens, completion: totalCompletionTokens } };
     }
 
-    // Execute each tool call and append results
-    for (const toolCall of assistantMessage.tool_calls) {
-      console.log(`[Agent] Tool call: ${toolCall.function.name}`);
-
+    for (const toolCall of assistantMsg.tool_calls) {
+      console.log(`[Agent] Tool: ${toolCall.function.name}`);
       const result = await executeTool(toolCall);
+      messages.push({ role: 'tool', content: result, tool_call_id: toolCall.id });
 
-      // Notify callback if provided
-      if (onToolExecution) {
-        onToolExecution(toolCall.function.name, result);
+      // Save tool execution to conversation
+      if (conversationId && conversationStore) {
+        await conversationStore.addMessage(conversationId, {
+          id: `tool_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          role: 'tool', content: result, timestamp: Date.now(),
+        });
       }
-
-      // Append the tool result as a tool role message
-      messages.push({
-        role: 'tool',
-        content: result,
-        tool_call_id: toolCall.id,
-      });
     }
   }
 
-  // If we hit the iteration limit, add a warning
-  messages.push({
-    role: 'system',
-    content: `[System: Maximum iterations (${MAX_ITERATIONS}) reached. Please provide your final answer based on the work done so far.]`,
-  });
-
-  // One final call to get the summary
+  // Hit limit — get final summary
+  messages.push({ role: 'system', content: `[System: Max iterations (${MAX_ITERATIONS}) reached. Give final answer.]` });
   const finalResponse = await callLLM(baseUrl, apiKey, authPrefix, model, messages);
-  const finalChoice = finalResponse.choices?.[0];
-  if (finalChoice?.message) {
-    messages.push({
-      role: 'assistant',
-      content: finalChoice.message.content,
-    });
+  if (finalResponse.choices?.[0]?.message) {
+    messages.push({ role: 'assistant', content: finalResponse.choices[0].message.content });
   }
 
-  return { messages, iterations };
+  return { messages, iterations, tokenUsage: { prompt: totalPromptTokens, completion: totalCompletionTokens } };
 }
 
 // ============================================================================
-// PROVIDER CONFIGURATION
+// PROVIDERS
 // ============================================================================
 
 type ProviderConfig = { baseUrl: string | (() => string); getApiKey: () => string; authPrefix: string; };
 function getBaseUrl(p: ProviderConfig): string { return typeof p.baseUrl === 'function' ? p.baseUrl() : p.baseUrl; }
+
 const PROVIDERS: Record<string, ProviderConfig> = {
-  openrouter: {
-    baseUrl: 'https://openrouter.ai/api/v1',
-    getApiKey: () => store.get('openrouterApiKey'),
-    authPrefix: 'Bearer ',
-  },
-  nvidia_nim: {
-    baseUrl: 'https://integrate.api.nvidia.com/v1',
-    getApiKey: () => store.get('nvidiaNimApiKey'),
-    authPrefix: 'Bearer ',
-  },
-  openai: {
-    baseUrl: 'https://api.openai.com/v1',
-    getApiKey: () => store.get('openaiApiKey'),
-    authPrefix: 'Bearer ',
-  },
-  anthropic: {
-    baseUrl: 'https://api.anthropic.com/v1',
-    getApiKey: () => store.get('anthropicApiKey'),
-    authPrefix: 'Bearer ',
-  },
-  deepseek: {
-    baseUrl: 'https://api.deepseek.com/v1',
-    getApiKey: () => store.get('deepseekApiKey'),
-    authPrefix: 'Bearer ',
-  },
-  gemini: {
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    getApiKey: () => store.get('geminiApiKey'),
-    authPrefix: 'Bearer ',
-  },
-  groq: {
-    baseUrl: 'https://api.groq.com/openai/v1',
-    getApiKey: () => store.get('groqApiKey'),
-    authPrefix: 'Bearer ',
-  },
-  together: {
-    baseUrl: 'https://api.together.xyz/v1',
-    getApiKey: () => store.get('togetherApiKey'),
-    authPrefix: 'Bearer ',
-  },
-  mistral: {
-    baseUrl: 'https://api.mistral.ai/v1',
-    getApiKey: () => store.get('mistralApiKey'),
-    authPrefix: 'Bearer ',
-  },
-  cohere: {
-    baseUrl: 'https://api.cohere.com/v2',
-    getApiKey: () => store.get('cohereApiKey'),
-    authPrefix: 'Bearer ',
-  },
-  local_llm: {
-    baseUrl: () => store.get('localLlmEndpoint') || 'http://localhost:11434/v1',
-    getApiKey: () => store.get('localLlmApiKey') || 'ollama',
-    authPrefix: 'Bearer ',
-  },
+  openrouter: { baseUrl: 'https://openrouter.ai/api/v1', getApiKey: () => store.get('openrouterApiKey'), authPrefix: 'Bearer ' },
+  nvidia_nim: { baseUrl: 'https://integrate.api.nvidia.com/v1', getApiKey: () => store.get('nvidiaNimApiKey'), authPrefix: 'Bearer ' },
+  openai: { baseUrl: 'https://api.openai.com/v1', getApiKey: () => store.get('openaiApiKey'), authPrefix: 'Bearer ' },
+  anthropic: { baseUrl: 'https://api.anthropic.com/v1', getApiKey: () => store.get('anthropicApiKey'), authPrefix: 'Bearer ' },
+  deepseek: { baseUrl: 'https://api.deepseek.com/v1', getApiKey: () => store.get('deepseekApiKey'), authPrefix: 'Bearer ' },
+  gemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', getApiKey: () => store.get('geminiApiKey'), authPrefix: 'Bearer ' },
+  groq: { baseUrl: 'https://api.groq.com/openai/v1', getApiKey: () => store.get('groqApiKey'), authPrefix: 'Bearer ' },
+  together: { baseUrl: 'https://api.together.xyz/v1', getApiKey: () => store.get('togetherApiKey'), authPrefix: 'Bearer ' },
+  mistral: { baseUrl: 'https://api.mistral.ai/v1', getApiKey: () => store.get('mistralApiKey'), authPrefix: 'Bearer ' },
+  cohere: { baseUrl: 'https://api.cohere.com/v2', getApiKey: () => store.get('cohereApiKey'), authPrefix: 'Bearer ' },
+  local_llm: { baseUrl: () => store.get('localLlmEndpoint') || 'http://localhost:11434/v1', getApiKey: () => store.get('localLlmApiKey') || 'ollama', authPrefix: 'Bearer ' },
 };
 
 function detectProvider(modelId: string): string {
   const lower = modelId.toLowerCase();
-  const nvidiaPrefixes = ['nvidia', 'meta/', 'mistralai/', 'google/', 'microsoft/', 'ibm/', 'databricks/', 'baai/'];
-  for (const prefix of nvidiaPrefixes) {
+  for (const prefix of ['nvidia', 'meta/', 'mistralai/', 'google/', 'microsoft/', 'ibm/', 'databricks/', 'baai/']) {
     if (lower.startsWith(prefix)) return 'nvidia_nim';
   }
   return 'openrouter';
 }
 
 // ============================================================================
-// EXPRESS APP FACTORY
+// EXPRESS APP
 // ============================================================================
 
-export function startExpressApp(): express.Express {
-  const app = express();
+export async function startExpressApp(): Promise<express.Express> {
+  // Initialize services
+  const dataDir = join(getWorkspaceDir(), '.michaelangelo');
+  await mkdir(dataDir, { recursive: true });
 
+  conversationStore = new ConversationStore(dataDir);
+  await conversationStore.init();
+
+  slashHandler = new SlashCommandHandler(conversationStore, getWorkspaceDir());
+  tokenTracker = new TokenTracker();
+  projectDetector = new ProjectDetector(getWorkspaceDir());
+
+  const app = express();
   app.use(express.json({ limit: '10mb' }));
 
   // CORS
   app.use((_req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     if (_req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });
 
-  // --------------------------------------------------------------------------
+  // ==========================================================================
   // GET /api/models
-  // --------------------------------------------------------------------------
+  // ==========================================================================
   app.get('/api/models', async (_req: Request, res: Response) => {
     const models: Array<{ id: string; name: string; provider: string; description?: string }> = [];
 
-    const orKey = store.get('openrouterApiKey');
-    if (orKey) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
-        const response = await fetch('https://openrouter.ai/api/v1/models', {
-          headers: { Authorization: `Bearer ${orKey}` },
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (response.ok) {
-          const data = await response.json() as any;
-          for (const m of data.data || []) {
-            models.push({ id: m.id, name: m.name || m.id, provider: 'openrouter', description: m.description });
-          }
-        }
-      } catch (err) {
-        console.error('[Proxy] Failed to fetch OpenRouter models:', err);
-      }
-    }
-
-    // NIM
-    const nimKey = store.get('nvidiaNimApiKey');
-    if (nimKey) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
-        const response = await fetch('https://integrate.api.nvidia.com/v1/models', {
-          headers: { Authorization: `Bearer ${nimKey}` }, signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (response.ok) {
-          const data = await response.json() as any;
-          for (const m of data.data || []) {
-            const id = m.id.toLowerCase();
-            if (id.includes('embed') || id.includes('vision') || id.includes('safety') || id.includes('parse') || id.includes('translate') || id.includes('rerank') || id.includes('guard') || id.includes('steer') || id.includes('coder') || id.includes('snowflake') || id.includes('arctic') || id.includes('cosmo')) continue;
-            if (!id.includes('instruct') && !id.includes('chat')) continue;
-            models.push({ id: m.id, name: m.id.split('/').pop() || m.id, provider: 'nvidia_nim' });
-          }
-        }
-      } catch (err) { console.error('[Proxy] NIM models error:', err); }
-    }
-
-    // OpenAI
-    const openaiKey = store.get('openaiApiKey');
-    if (openaiKey) {
+    const fetchRemote = async (url: string, headers: Record<string, string>, filter?: (m: any) => boolean, mapper?: (m: any) => any) => {
       try {
         const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000);
-        const r = await fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${openaiKey}` }, signal: c.signal });
-        clearTimeout(t);
+        const r = await fetch(url, { headers, signal: c.signal }); clearTimeout(t);
         if (r.ok) {
           const d = await r.json() as any;
           for (const m of d.data || []) {
-            if (m.id.startsWith('gpt') || m.id.startsWith('o1') || m.id.startsWith('o3')) {
-              models.push({ id: m.id, name: m.id, provider: 'openai' });
-            }
+            if (filter && !filter(m)) continue;
+            models.push(mapper ? mapper(m) : { id: m.id, name: m.name || m.id, provider: 'unknown' });
           }
         }
-      } catch (err) { console.error('[Proxy] OpenAI models error:', err); }
-    }
+      } catch { /* ignore */ }
+    };
 
-    // Anthropic
+    // OpenRouter
+    const orKey = store.get('openrouterApiKey');
+    if (orKey) await fetchRemote('https://openrouter.ai/api/v1/models', { Authorization: `Bearer ${orKey}` }, undefined,
+      m => ({ id: m.id, name: m.name || m.id, provider: 'openrouter', description: m.description }));
+
+    // NIM
+    const nimKey = store.get('nvidiaNimApiKey');
+    if (nimKey) await fetchRemote('https://integrate.api.nvidia.com/v1/models', { Authorization: `Bearer ${nimKey}` },
+      m => { const id = m.id.toLowerCase(); return (id.includes('instruct') || id.includes('chat')) && !['embed', 'vision', 'safety', 'parse', 'translate', 'rerank', 'guard', 'steer'].some(x => id.includes(x)); },
+      m => ({ id: m.id, name: m.id.split('/').pop() || m.id, provider: 'nvidia_nim' }));
+
+    // OpenAI
+    const openaiKey = store.get('openaiApiKey');
+    if (openaiKey) await fetchRemote('https://api.openai.com/v1/models', { Authorization: `Bearer ${openaiKey}` },
+      m => m.id.startsWith('gpt') || m.id.startsWith('o1') || m.id.startsWith('o3'),
+      m => ({ id: m.id, name: m.id, provider: 'openai' }));
+
+    // Anthropic (static list)
     const antKey = store.get('anthropicApiKey');
     if (antKey) {
-      const antModels = ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'];
-      for (const id of antModels) { models.push({ id, name: id, provider: 'anthropic' }); }
+      for (const id of ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307']) {
+        models.push({ id, name: id, provider: 'anthropic' });
+      }
     }
 
     // DeepSeek
     const dsKey = store.get('deepseekApiKey');
-    if (dsKey) {
-      try {
-        const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000);
-        const r = await fetch('https://api.deepseek.com/v1/models', { headers: { Authorization: `Bearer ${dsKey}` }, signal: c.signal });
-        clearTimeout(t);
-        if (r.ok) {
-          const d = await r.json() as any;
-          for (const m of d.data || []) { models.push({ id: m.id, name: m.id, provider: 'deepseek' }); }
-        }
-      } catch (err) { console.error('[Proxy] DeepSeek models error:', err); }
-    }
+    if (dsKey) await fetchRemote('https://api.deepseek.com/v1/models', { Authorization: `Bearer ${dsKey}` }, undefined,
+      m => ({ id: m.id, name: m.id, provider: 'deepseek' }));
 
-    // Gemini
+    // Gemini (static)
     const gemKey = store.get('geminiApiKey');
     if (gemKey) {
-      const gemModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'];
-      for (const id of gemModels) { models.push({ id, name: id, provider: 'gemini' }); }
+      for (const id of ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash']) {
+        models.push({ id, name: id, provider: 'gemini' });
+      }
     }
 
     // Groq
     const groqKey = store.get('groqApiKey');
-    if (groqKey) {
-      try {
-        const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000);
-        const r = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: `Bearer ${groqKey}` }, signal: c.signal });
-        clearTimeout(t);
-        if (r.ok) {
-          const d = await r.json() as any;
-          for (const m of d.data || []) {
-            if (m.id.includes('llama') || m.id.includes('mixtral') || m.id.includes('gemma') || m.id.includes('whisper')) {
-              models.push({ id: m.id, name: m.id, provider: 'groq' });
-            }
-          }
-        }
-      } catch (err) { console.error('[Proxy] Groq models error:', err); }
-    }
+    if (groqKey) await fetchRemote('https://api.groq.com/openai/v1/models', { Authorization: `Bearer ${groqKey}` },
+      m => m.id.includes('llama') || m.id.includes('mixtral') || m.id.includes('gemma'),
+      m => ({ id: m.id, name: m.id, provider: 'groq' }));
 
     // Together
     const togKey = store.get('togetherApiKey');
-    if (togKey) {
-      try {
-        const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000);
-        const r = await fetch('https://api.together.xyz/v1/models', { headers: { Authorization: `Bearer ${togKey}` }, signal: c.signal });
-        clearTimeout(t);
-        if (r.ok) {
-          const d = await r.json() as any;
-          for (const m of d.data || []) {
-            if (m.id && (m.id.includes('llama') || m.id.includes('mistral') || m.id.includes('gemma') || m.id.includes('qwen'))) {
-              models.push({ id: m.id, name: m.name || m.id, provider: 'together' });
-            }
-          }
-        }
-      } catch (err) { console.error('[Proxy] Together models error:', err); }
-    }
+    if (togKey) await fetchRemote('https://api.together.xyz/v1/models', { Authorization: `Bearer ${togKey}` },
+      m => m.id && ['llama', 'mistral', 'gemma', 'qwen'].some(x => m.id.includes(x)),
+      m => ({ id: m.id, name: m.name || m.id, provider: 'together' }));
 
     // Mistral
     const mistKey = store.get('mistralApiKey');
-    if (mistKey) {
-      try {
-        const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000);
-        const r = await fetch('https://api.mistral.ai/v1/models', { headers: { Authorization: `Bearer ${mistKey}` }, signal: c.signal });
-        clearTimeout(t);
-        if (r.ok) {
-          const d = await r.json() as any;
-          for (const m of d.data || []) { models.push({ id: m.id, name: m.id, provider: 'mistral' }); }
-        }
-      } catch (err) { console.error('[Proxy] Mistral models error:', err); }
-    }
+    if (mistKey) await fetchRemote('https://api.mistral.ai/v1/models', { Authorization: `Bearer ${mistKey}` }, undefined,
+      m => ({ id: m.id, name: m.id, provider: 'mistral' }));
 
-    // Cohere
+    // Cohere (static)
     const cohKey = store.get('cohereApiKey');
     if (cohKey) {
-      const cohModels = ['command-r-plus', 'command-r', 'command-light'];
-      for (const id of cohModels) { models.push({ id, name: id, provider: 'cohere' }); }
+      for (const id of ['command-r-plus', 'command-r', 'command-light']) {
+        models.push({ id, name: id, provider: 'cohere' });
+      }
     }
 
-    // Local LLM (Ollama, llama.cpp, LM Studio, vLLM, etc.)
+    // Local LLM
     const localEndpoint = store.get('localLlmEndpoint');
     if (localEndpoint) {
-      try {
-        const c = new AbortController(); const t = setTimeout(() => c.abort(), 5000);
-        const r = await fetch(`${localEndpoint}/models`, {
-          headers: { Authorization: `Bearer ${store.get('localLlmApiKey') || 'ollama'}` },
-          signal: c.signal,
-        });
-        clearTimeout(t);
-        if (r.ok) {
-          const d = await r.json() as any;
-          for (const m of d.data || []) {
-            models.push({ id: m.id, name: m.id, provider: 'local_llm' });
-          }
-        }
-      } catch (err) { console.log('[Proxy] Local LLM not reachable:', (err as any).message); }
+      await fetchRemote(`${localEndpoint}/models`, { Authorization: `Bearer ${store.get('localLlmApiKey') || 'ollama'}` }, undefined,
+        m => ({ id: m.id, name: m.id, provider: 'local_llm' }));
     }
 
     res.json({ models });
   });
 
-  // --------------------------------------------------------------------------
-  // POST /api/chat/completions — Standard chat (no agent loop)
-  // --------------------------------------------------------------------------
+  // ==========================================================================
+  // POST /api/chat/completions — Standard chat
+  // ==========================================================================
   app.post('/api/chat/completions', async (req: Request, res: Response) => {
-    const { model, messages, max_tokens, temperature, stream, provider: explicitProvider } = req.body;
+    const { model, messages, max_tokens, temperature, stream, provider: ep } = req.body;
+    if (!model || !messages) return res.status(400).json({ error: 'model and messages required' });
 
-    if (!model || !messages) {
-      return res.status(400).json({ error: 'model and messages are required' });
-    }
-
-    // Use explicit provider if provided, otherwise fall back to prefix detection
-    const providerKey = (explicitProvider && explicitProvider !== 'auto' && PROVIDERS[explicitProvider]) ? explicitProvider : detectProvider(model);
-    const provider = PROVIDERS[providerKey];
+    const pk = (ep && ep !== 'auto' && PROVIDERS[ep]) ? ep : detectProvider(model);
+    const provider = PROVIDERS[pk];
     const apiKey = provider.getApiKey();
+    if (!apiKey) return res.status(400).json({ error: `No API key for ${pk}` });
 
-    if (!apiKey) {
-      return res.status(400).json({ error: `No API key for ${providerKey}. Add it in Settings.` });
-    }
-
-    const upstreamBody: any = {
-      model,
-      messages,
-      max_tokens: max_tokens || 4096,
-      temperature: temperature ?? 0.7,
-      stream: stream ?? false,
-    };
-
-    console.log(`[Proxy] ${providerKey} → ${model}`);
+    const body: any = { model, messages, max_tokens: max_tokens || 4096, temperature: temperature ?? 0.7, stream: stream ?? false };
+    console.log(`[Proxy] ${pk} → ${model}`);
 
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
-
+      const c = new AbortController(); const t = setTimeout(() => c.abort(), 5 * 60 * 1000);
       const response = await fetch(`${getBaseUrl(provider)}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `${provider.authPrefix}${apiKey}`,
-        },
-        body: JSON.stringify(upstreamBody),
-        signal: controller.signal,
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `${provider.authPrefix}${apiKey}` },
+        body: JSON.stringify(body), signal: c.signal,
       });
-      clearTimeout(timeout);
+      clearTimeout(t);
 
       if (stream) {
-        if (!response.ok) {
-          const errBody = await response.text().catch(() => 'Unknown error');
-          return res.status(response.status).json({ error: `Provider error: ${errBody}` });
-        }
-
+        if (!response.ok) { const e = await response.text().catch(() => ''); return res.status(response.status).json({ error: e }); }
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
-
         const reader = response.body?.getReader();
-        if (!reader) return res.status(502).json({ error: 'No response body' });
-
-        const decoder = new TextDecoder();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            res.write(decoder.decode(value, { stream: true }));
-          }
-        } catch (err: any) {
-          console.error('[Proxy] Stream interrupted:', err.message);
-        }
+        if (!reader) return res.status(502).json({ error: 'No body' });
+        const dec = new TextDecoder();
+        try { while (true) { const { done, value } = await reader.read(); if (done) break; res.write(dec.decode(value, { stream: true })); } }
+        catch { /* interrupted */ }
         res.end();
       } else {
         const data = await response.json();
         res.status(response.status).json(data);
       }
     } catch (err: any) {
-      const msg = err.name === 'AbortError' ? 'Request timed out' : err.message;
-      console.error(`[Proxy] Error:`, msg);
-      res.status(502).json({ error: msg });
+      res.status(502).json({ error: err.name === 'AbortError' ? 'Timeout' : err.message });
     }
   });
 
-  // --------------------------------------------------------------------------
-  // POST /api/agent — Master Orchestrator endpoint
-  // Integrates plugins, MCP, skills, and memory.
-  // --------------------------------------------------------------------------
+  // ==========================================================================
+  // POST /api/agent — Orchestrator endpoint
+  // ==========================================================================
   app.post('/api/agent', async (req: Request, res: Response) => {
-    const { model, messages, provider: explicitProvider, coderModel, coderProvider } = req.body;
+    const { model, messages, provider: ep, conversationId } = req.body;
+    if (!model || !messages) return res.status(400).json({ error: 'model and messages required' });
 
-    if (!model || !messages) {
-      return res.status(400).json({ error: 'model and messages are required' });
-    }
-
-    const providerKey = (explicitProvider && explicitProvider !== 'auto' && PROVIDERS[explicitProvider]) ? explicitProvider : detectProvider(model);
-    const provider = PROVIDERS[providerKey];
+    const pk = (ep && ep !== 'auto' && PROVIDERS[ep]) ? ep : detectProvider(model);
+    const provider = PROVIDERS[pk];
     const apiKey = provider.getApiKey();
+    if (!apiKey) return res.status(400).json({ error: `No API key for ${pk}` });
 
-    if (!apiKey) {
-      return res.status(400).json({ error: `No API key for ${providerKey}. Add it in Settings.` });
+    // Check for slash commands in the last user message
+    const lastUserMsg = messages.filter((m: any) => m.role === 'user').pop();
+    if (lastUserMsg?.content?.startsWith('/')) {
+      slashHandler.setModel(model, pk);
+      const result = await slashHandler.execute(lastUserMsg.content);
+      if (result.meta) {
+        // Meta command — handle locally
+        if (result.action === 'clear') {
+          return res.json({ choices: [{ message: { role: 'assistant', content: result.response }, finish_reason: 'stop' }], slash_command: true, action: 'clear' });
+        }
+        if (result.action === 'load_session') {
+          const conv = conversationStore.get(result.payload);
+          if (conv) {
+            return res.json({ choices: [{ message: { role: 'assistant', content: result.response }, finish_reason: 'stop' }], slash_command: true, action: 'load_session', conversation: conv });
+          }
+        }
+        return res.json({ choices: [{ message: { role: 'assistant', content: result.response }, finish_reason: 'stop' }], slash_command: true });
+      }
+      // Non-meta command — forward to agent with modified message
+      messages[messages.length - 1] = { role: 'user', content: result.response };
     }
 
-    console.log(`[Orchestrator] Starting: ${providerKey} → ${model}`);
+    console.log(`[Orchestrator] Starting: ${pk} → ${model}`);
 
     try {
-      // Create and initialize the orchestrator
-      const orchestrator = new Orchestrator({
-        model,
-        baseUrl: getBaseUrl(provider),
-        apiKey,
-        authPrefix: provider.authPrefix,
-        workspace: getWorkspaceDir(),
-        maxIterations: 12,
-        enableMemory: true,
-        enableMCP: false,
-      });
-
-      // Configure multi-model routing if a coder model is provided
-      if (coderModel && coderProvider && PROVIDERS[coderProvider]) {
-        const coderProv = PROVIDERS[coderProvider];
-        const coderKey = coderProv.getApiKey();
-        if (coderKey) {
-          const router = new MultiModelRouter({
-            orchestrator: { provider: providerKey, model },
-            coder: { provider: coderProvider, model: coderModel },
-            getApiKey: (p) => PROVIDERS[p]?.getApiKey() || '',
-            getBaseUrl: (p) => getBaseUrl(PROVIDERS[p]!),
-            getAuthPrefix: (p) => PROVIDERS[p]?.authPrefix || 'Bearer ',
-          });
-          orchestrator.setMultiModelRouter(router);
-          console.log(`[Orchestrator] Multi-model routing: orchestrator=${model}, coder=${coderModel}`);
-        }
+      // Create or get conversation
+      let convId = conversationId;
+      if (!convId) {
+        const conv = await conversationStore.create(lastUserMsg?.content?.substring(0, 80) || 'New conversation', model, pk, getWorkspaceDir());
+        convId = conv.id;
       }
 
-      await orchestrator.init();
+      // Save user message
+      await conversationStore.addMessage(convId, {
+        id: `msg_${Date.now()}`, role: 'user',
+        content: lastUserMsg?.content || '', timestamp: Date.now(),
+      });
 
-      // Execute the agent task
-      const result = await orchestrator.execute(messages);
+      const result = await agenticLoop(getBaseUrl(provider), apiKey, provider.authPrefix, model, pk, messages, convId);
 
-      // Shutdown orchestrator
-      await orchestrator.shutdown();
+      // Track tokens
+      const usage = tokenTracker.record(result.tokenUsage.prompt, result.tokenUsage.completion, model, pk);
+
+      // Get final response content
+      const finalContent = result.messages.filter(m => m.role === 'assistant' && m.content).pop()?.content || 'Task completed.';
+
+      // Save assistant message
+      await conversationStore.addMessage(convId, {
+        id: `msg_${Date.now()}`, role: 'assistant', content: finalContent, timestamp: Date.now(),
+        tokens: { prompt: result.tokenUsage.prompt, completion: result.tokenUsage.completion, total: result.tokenUsage.prompt + result.tokenUsage.completion },
+        cost: usage.estimatedCost,
+      });
 
       res.json({
-        choices: [{
-          message: {
-            role: 'assistant',
-            content: result.messages
-              .filter(m => m.role === 'assistant' && m.content)
-              .pop()?.content || 'Task completed.',
-          },
-          finish_reason: 'stop',
-        }],
+        choices: [{ message: { role: 'assistant', content: finalContent }, finish_reason: 'stop' }],
         agent_metadata: {
           iterations: result.iterations,
-          tool_executions: result.toolExecutions,
-          total_tool_calls: result.toolExecutions.length,
-          memory_entries: result.memoryEntries.length,
-          plugins: ['memory'],
-          compression: result.compressionStats,
+          total_tool_calls: result.messages.filter(m => m.role === 'tool').length,
+          tokens: { prompt: result.tokenUsage.prompt, completion: result.tokenUsage.completion },
+          cost: usage.estimatedCost,
+          conversation_id: convId,
         },
       });
     } catch (err: any) {
@@ -958,68 +562,104 @@ export function startExpressApp(): express.Express {
     }
   });
 
-  // --------------------------------------------------------------------------
+  // ==========================================================================
   // POST /api/test-model
-  // --------------------------------------------------------------------------
+  // ==========================================================================
   app.post('/api/test-model', async (req: Request, res: Response) => {
-    const { model, provider: explicitProvider } = req.body;
-    if (!model) return res.status(400).json({ error: 'model is required' });
-
-    // Use explicit provider if provided, otherwise fall back to prefix detection
-    const providerKey = (explicitProvider && explicitProvider !== 'auto' && PROVIDERS[explicitProvider]) ? explicitProvider : detectProvider(model);
-    const provider = PROVIDERS[providerKey];
+    const { model, provider: ep } = req.body;
+    if (!model) return res.status(400).json({ error: 'model required' });
+    const pk = (ep && ep !== 'auto' && PROVIDERS[ep]) ? ep : detectProvider(model);
+    const provider = PROVIDERS[pk];
     const apiKey = provider.getApiKey();
-    if (!apiKey) return res.json({ success: false, error: `No API key for ${providerKey}` });
-
+    if (!apiKey) return res.json({ success: false, error: `No API key for ${pk}` });
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
-
-      const response = await fetch(`${getBaseUrl(provider)}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `${provider.authPrefix}${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: 'Say exactly: Hello world' }],
-          max_tokens: 50,
-          temperature: 0.7,
-          stream: false,
-        }),
-        signal: controller.signal,
+      const c = new AbortController(); const t = setTimeout(() => c.abort(), 30000);
+      const r = await fetch(`${getBaseUrl(provider)}/chat/completions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `${provider.authPrefix}${apiKey}` },
+        body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Say exactly: Hello world' }], max_tokens: 50, temperature: 0.7 }),
+        signal: c.signal,
       });
-      clearTimeout(timeout);
-
-      const data = await response.json() as any;
+      clearTimeout(t);
+      const data = await r.json() as any;
       const content = data.choices?.[0]?.message?.content;
-
-      if (content && content.trim().length > 0) {
-        res.json({ success: true, response: content.trim() });
-      } else {
-        res.json({ success: false, error: data.error?.message || 'No content' });
-      }
+      res.json(content?.trim() ? { success: true, response: content.trim() } : { success: false, error: data.error?.message || 'No content' });
     } catch (err: any) {
       res.json({ success: false, error: err.name === 'AbortError' ? 'Timeout' : err.message });
     }
   });
 
-  // --------------------------------------------------------------------------
+  // ==========================================================================
+  // GET /api/conversations — List all conversations
+  // ==========================================================================
+  app.get('/api/conversations', (_req: Request, res: Response) => {
+    res.json({ conversations: conversationStore.list(50) });
+  });
+
+  // ==========================================================================
+  // GET /api/conversations/:id — Get a conversation
+  // ==========================================================================
+  app.get('/api/conversations/:id', (req: Request, res: Response) => {
+    const conv = conversationStore.get(req.params.id);
+    if (!conv) return res.status(404).json({ error: 'Not found' });
+    res.json(conv);
+  });
+
+  // ==========================================================================
+  // DELETE /api/conversations/:id — Delete a conversation
+  // ==========================================================================
+  app.delete('/api/conversations/:id', async (req: Request, res: Response) => {
+    await conversationStore.delete(req.params.id);
+    res.json({ success: true });
+  });
+
+  // ==========================================================================
+  // GET /api/conversations/search?q= — Search conversations
+  // ==========================================================================
+  app.get('/api/conversations/search', (req: Request, res: Response) => {
+    const q = (req.query.q as string) || '';
+    res.json({ conversations: conversationStore.search(q) });
+  });
+
+  // ==========================================================================
+  // GET /api/conversations/export/:id — Export as markdown
+  // ==========================================================================
+  app.get('/api/conversations/export/:id', (req: Request, res: Response) => {
+    const md = conversationStore.exportMarkdown(req.params.id);
+    if (!md) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', 'text/markdown');
+    res.send(md);
+  });
+
+  // ==========================================================================
+  // GET /api/project — Detect project info
+  // ==========================================================================
+  app.get('/api/project', async (_req: Request, res: Response) => {
+    const info = await projectDetector.detect();
+    res.json(info);
+  });
+
+  // ==========================================================================
+  // GET /api/stats — Token/cost stats
+  // ==========================================================================
+  app.get('/api/stats', (_req: Request, res: Response) => {
+    const trackerTotal = tokenTracker.getTotal();
+    const convStats = conversationStore.getStats();
+    res.json({
+      tokens: trackerTotal,
+      conversations: convStats,
+    });
+  });
+
+  // ==========================================================================
   // GET /api/settings/status
-  // --------------------------------------------------------------------------
+  // ==========================================================================
   app.get('/api/settings/status', (_req: Request, res: Response) => {
     res.json({
-      openrouter: !!store.get('openrouterApiKey'),
-      nvidia_nim: !!store.get('nvidiaNimApiKey'),
-      openai: !!store.get('openaiApiKey'),
-      anthropic: !!store.get('anthropicApiKey'),
-      deepseek: !!store.get('deepseekApiKey'),
-      gemini: !!store.get('geminiApiKey'),
-      groq: !!store.get('groqApiKey'),
-      together: !!store.get('togetherApiKey'),
-      mistral: !!store.get('mistralApiKey'),
-      cohere: !!store.get('cohereApiKey'),
+      openrouter: !!store.get('openrouterApiKey'), nvidia_nim: !!store.get('nvidiaNimApiKey'),
+      openai: !!store.get('openaiApiKey'), anthropic: !!store.get('anthropicApiKey'),
+      deepseek: !!store.get('deepseekApiKey'), gemini: !!store.get('geminiApiKey'),
+      groq: !!store.get('groqApiKey'), together: !!store.get('togetherApiKey'),
+      mistral: !!store.get('mistralApiKey'), cohere: !!store.get('cohereApiKey'),
       local_llm: !!store.get('localLlmEndpoint'),
     });
   });
