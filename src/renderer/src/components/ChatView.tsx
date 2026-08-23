@@ -10,9 +10,12 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Bot, User, Trash2, AlertCircle, FolderOpen, Folder, Check, Wifi, WifiOff, MessageSquare, Search, Clock, Coins, ChevronDown, ChevronRight, X, Copy, CheckCheck, Terminal, FileCode, Zap, History } from 'lucide-react';
+import { Send, Bot, User, Trash2, AlertCircle, FolderOpen, Folder, Check, Wifi, WifiOff, MessageSquare, Search, Clock, Coins, ChevronDown, ChevronRight, X, Copy, CheckCheck, Terminal, FileCode, Zap, History, PanelRight } from 'lucide-react';
 import { Model, ModelStatus, ChatMessage } from '../types';
 import { sendAgentMessage, sendAgentMessageStream, generateId, fetchConversations, getConversation, deleteConversation, searchConversations, ConversationSummary, detectProject, getStats } from '../services/api';
+import TerminalPanel from './TerminalPanel';
+import PermissionDialog from './PermissionDialog';
+import DiffViewer from './DiffViewer';
 
 interface Props {
   activeModel: Model | null;
@@ -38,6 +41,11 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [tokenInfo, setTokenInfo] = useState<{ tokens: number; cost: number } | null>(null);
   const [toolActivity, setToolActivity] = useState<Array<{ name: string; status: string; detail?: string }>>([]);
+  const [toolEvents, setToolEvents] = useState<Array<{ id: string; tool: string; args: Record<string, any>; status: 'running' | 'completed' | 'failed'; output?: string; duration?: number; iteration: number; timestamp: number }>>([]);
+  const [currentIteration, setCurrentIteration] = useState(0);
+  const [showContextPanel, setShowContextPanel] = useState(true);
+  const [contextPanelTab, setContextPanelTab] = useState<'terminal' | 'diff'>('terminal');
+  const [lastDiff, setLastDiff] = useState<any>(null);
 
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -128,12 +136,27 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
           },
           onToolStart: (tool, args, iteration) => {
             setToolActivity(prev => [...prev, { name: tool, status: 'running', detail: iteration.toString() }]);
+            const eventId = generateId();
+            setToolEvents(prev => [...prev, { id: eventId, tool, args: args || {}, status: 'running', iteration, timestamp: Date.now() }]);
+            setCurrentIteration(iteration);
+            setContextPanelTab('terminal');
           },
           onToolComplete: (tool, success, output, iteration) => {
             setToolActivity(prev => prev.map(t => t.status === 'running' && t.name === tool ? { ...t, status: success ? 'completed' : 'failed' } : t));
+            setToolEvents(prev => {
+              const updated = [...prev];
+              for (let i = updated.length - 1; i >= 0; i--) {
+                if (updated[i].tool === tool && updated[i].status === 'running') {
+                  updated[i] = { ...updated[i], status: success ? 'completed' : 'failed', output: output || '' };
+                  break;
+                }
+              }
+              return updated;
+            });
           },
           onIterationStart: (iteration, max) => {
             setToolActivity(prev => [...prev, { name: `Iteration ${iteration}/${max}`, status: 'running' }]);
+            setCurrentIteration(iteration);
           },
           onMetadata: (meta) => {
             if (meta) {
@@ -322,6 +345,42 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
 
   return (
     <div className="h-full flex">
+      {/* Context Panel (right side, toggleable) */}
+      {showContextPanel && (
+        <div className="w-[380px] border-l border-dark-700 bg-dark-900 flex flex-col flex-shrink-0">
+          {/* Context Panel Header */}
+          <div className="px-3 py-2 border-b border-dark-700 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <button onClick={() => setContextPanelTab('terminal')}
+                className={`px-2 py-0.5 text-[10px] rounded font-medium transition-colors ${contextPanelTab === 'terminal' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
+                <Terminal size={10} className="inline mr-1" />Activity
+              </button>
+              <button onClick={() => setContextPanelTab('diff')}
+                className={`px-2 py-0.5 text-[10px] rounded font-medium transition-colors ${contextPanelTab === 'diff' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
+                <FileCode size={10} className="inline mr-1" />Diff
+              </button>
+            </div>
+            <button onClick={() => setShowContextPanel(false)} className="text-dark-500 hover:text-white">
+              <X size={12} />
+            </button>
+          </div>
+          {/* Context Panel Content */}
+          <div className="flex-1 overflow-hidden">
+            {contextPanelTab === 'terminal' ? (
+              <TerminalPanel toolEvents={toolEvents} iteration={currentIteration} maxIterations={20} isRunning={loading} />
+            ) : lastDiff ? (
+              <DiffViewer diff={lastDiff} />
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-dark-500">
+                <FileCode size={24} className="mb-2 opacity-30" />
+                <p className="text-[10px]">No diffs yet</p>
+                <p className="text-[9px] mt-1">File edits will show side-by-side diffs here</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Sessions Sidebar (toggleable) */}
       {viewMode === 'sessions' && (
         <div className="w-64 border-r border-dark-700 bg-dark-900 flex flex-col">
@@ -437,6 +496,10 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             <button onClick={() => setViewMode(viewMode === 'project' ? 'chat' : 'project')}
               className={`p-1.5 rounded transition-colors ${viewMode === 'project' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white hover:bg-dark-800'}`} title="Project Info">
               <FileCode size={12} />
+            </button>
+            <button onClick={() => setShowContextPanel(!showContextPanel)}
+              className={`p-1.5 rounded transition-colors ${showContextPanel ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white hover:bg-dark-800'}`} title="Toggle Context Panel">
+              <PanelRight size={12} />
             </button>
             <div className="flex items-center gap-1 ml-1">
               <Folder size={10} className="text-purple-400" />

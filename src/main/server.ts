@@ -17,6 +17,7 @@ import Store from 'electron-store';
 import { Orchestrator, MultiModelRouter } from './agent';
 import { BrowserSkill, playwrightReady } from './agent/skills/browser';
 import { agentEventBus } from './agent/event-bus';
+import { generateDiff } from './agent/diff-engine';
 import { ConversationStore, ConversationMessage } from './conversations';
 import { SlashCommandHandler } from './agent/slash-commands';
 import { TokenTracker } from './agent/token-tracker';
@@ -97,23 +98,36 @@ const BLOCKED_COMMANDS = [
 // SYSTEM PROMPT
 // ============================================================================
 
-const SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant.
+const SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant that mirrors Claude Code's capabilities.
 
-YOUR JOB: When the user asks you to build, create, fix, or modify software, you MUST use your tools to actually do the work. Do NOT just output plans or code blocks — actually execute them.
+YOUR MISSION: Complete the user's task by executing real actions using your tools. NEVER output code blocks or plans without executing them.
 
-HOW TO WORK:
-1. Analyze what the user wants.
-2. Break it into concrete steps.
-3. Execute each step using your tools.
-4. After each action, check the result and continue.
-5. When everything is done, give the user a summary.
+## NAVIGATION RULES (ALWAYS FOLLOW)
+Before reading or editing ANY file, you MUST first discover it:
+1. Use glob_files to find files by pattern (e.g. "**/*.ts", "src/**/*.test.js")
+2. Use search_files to find code by content (e.g. function names, imports)
+3. Use list_files to explore directory structure
+4. THEN use read_file with specific file paths (and optional line ranges)
+Only use read_file directly if the user gives you an exact path.
 
-RULES:
-- Always use your tools to create files, run commands, and read files.
-- Never just show code — actually create the files.
-- If a command fails, read the error output and fix the issue.
+## EXECUTION WORKFLOW
+1. **Explore** — Use glob_files, search_files, list_files to understand the codebase.
+2. **Read** — Use read_file to examine relevant files.
+3. **Plan** — Formulate concrete changes.
+4. **Execute** — Use edit_file (preferred for changes) or write_file (for new files).
+5. **Verify** — Run commands to confirm changes work (build, test, lint).
+6. **Repeat** — If verification fails, diagnose and fix.
+
+## TOOL USAGE RULES
+- prefer edit_file over write_file for modifying existing files.
+- Use read_file with line_range for large files (e.g. "100-200").
+- Use run_command for builds, tests, and shell operations.
+- Always verify after executing — run tests or build commands.
+- If a command fails, read the error and fix it.
 - Be thorough — complete the entire task before stopping.
-- Your workspace is: {{WORKSPACE}}
+
+## WORKSPACE
+Your workspace is: {{WORKSPACE}}
 {{PROJECT_CONTEXT}}`;
 
 function getSystemPrompt(projectContext: string = ''): string {
@@ -150,11 +164,22 @@ async function executeWriteFile(args: { file_path: string; content: string }): P
   } catch (err: any) { return `ERROR writing file: ${err.message}`; }
 }
 
-async function executeReadFile(args: { file_path: string }): Promise<string> {
+async function executeReadFile(args: { file_path: string; line_range?: string }): Promise<string> {
   if (!isPathSafe(args.file_path)) return `ERROR: Path outside workspace: ${args.file_path}`;
   try {
-    const content = await readFile(resolvePath(args.file_path), 'utf-8');
-    return content.length > 50000 ? content.substring(0, 50000) + '\n\n... [truncated]' : content || '(empty file)';
+    let content = await readFile(resolvePath(args.file_path), 'utf-8');
+    const totalLines = content.split('\n').length;
+    // Line range support (e.g. "100-200")
+    if (args.line_range) {
+      const [startStr, endStr] = args.line_range.split('-');
+      const start = parseInt(startStr, 10) || 1;
+      const end = parseInt(endStr, 10) || totalLines;
+      const lines = content.split('\n');
+      const sliced = lines.slice(Math.max(0, start - 1), end);
+      return `--- ${args.file_path} (lines ${start}-${Math.min(end, totalLines)} of ${totalLines}) ---\n${sliced.map((l, i) => `${start + i}: ${l}`).join('\n')}`;
+    }
+    if (content.length > 50000) content = content.substring(0, 50000) + '\n\n... [truncated]';
+    return content || '(empty file)';
   } catch (err: any) {
     return err.code === 'ENOENT' ? `ERROR: File not found: ${args.file_path}` : `ERROR: ${err.message}`;
   }
@@ -971,6 +996,58 @@ export async function startExpressApp(): Promise<express.Express> {
       res.json(content?.trim() ? { success: true, response: content.trim() } : { success: false, error: data.error?.message || 'No content' });
     } catch (err: any) {
       res.json({ success: false, error: err.name === 'AbortError' ? 'Timeout' : err.message });
+    }
+  });
+
+  // ==========================================================================
+  // POST /api/diff-preview — Generate a diff preview for edit_file
+  // ==========================================================================
+  app.post('/api/diff-preview', async (req: Request, res: Response) => {
+    const { file_path, old_string, new_string } = req.body;
+    if (!file_path || old_string === undefined || new_string === undefined) {
+      return res.status(400).json({ error: 'file_path, old_string, and new_string required' });
+    }
+    if (!isPathSafe(file_path)) {
+      return res.status(403).json({ error: 'Path outside workspace' });
+    }
+    try {
+      const fullPath = resolvePath(file_path);
+      let currentContent = '';
+      try { currentContent = await readFile(fullPath, 'utf-8'); } catch { /* new file */ }
+      if (!currentContent.includes(old_string)) {
+        return res.json({ error: 'old_string not found in file', diff: null });
+      }
+      const newContent = currentContent.replace(old_string, new_string);
+      const diff = generateDiff(file_path, currentContent, newContent);
+      res.json({ diff });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================================================
+  // POST /api/apply-edit — Apply an edit and return the diff
+  // ==========================================================================
+  app.post('/api/apply-edit', async (req: Request, res: Response) => {
+    const { file_path, old_string, new_string } = req.body;
+    if (!file_path || old_string === undefined || new_string === undefined) {
+      return res.status(400).json({ error: 'file_path, old_string, and new_string required' });
+    }
+    if (!isPathSafe(file_path)) {
+      return res.status(403).json({ error: 'Path outside workspace' });
+    }
+    try {
+      const fullPath = resolvePath(file_path);
+      const currentContent = await readFile(fullPath, 'utf-8');
+      if (!currentContent.includes(old_string)) {
+        return res.json({ success: false, error: 'old_string not found' });
+      }
+      const newContent = currentContent.replace(old_string, new_string);
+      const diff = generateDiff(file_path, currentContent, newContent);
+      await writeFile(fullPath, newContent, 'utf-8');
+      res.json({ success: true, diff });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
