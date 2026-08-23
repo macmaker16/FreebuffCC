@@ -14,9 +14,12 @@
 
 ### 🟢 Confident
 
-### 🟡 Learning
-- Agentic loop flow — understand the iteration pattern and tool call cycle
+### 🟢 Confident
+- Agentic loop flow — iteration pattern and tool call cycle
 - Text-based tool call parsing — NIM Llama outputs tool calls as text, not structured
+- JSON repair technique — counting braces/brackets to fix truncated output
+
+### 🟡 Learning
 - SSE streaming — how events flow from server generator to React frontend
 
 ### 🔴 Need to Explore
@@ -41,9 +44,9 @@
 
 ## Open Questions
 
-- [ ] Why does parseToolCallsFromText silently drop malformed JSON instead of sending an error back to the LLM?
+- [x] Why does parseToolCallsFromText silently drop malformed JSON instead of sending an error back to the LLM? **Answer**: Fixed — now attempts JSON repair first, then logs warnings. Could further improve by sending error back to LLM.
 - [ ] What happens to the conversation when the agent exits early due to no tool calls?
-- [ ] How does the text parser handle multiple tool calls in a single response?
+- [x] How does the text parser handle multiple tool calls in a single response? **Answer**: The regex finds all matches in the content string, each becomes a separate tool call.
 
 ## Spaced Review Queue
 
@@ -51,7 +54,8 @@
 
 ## Aha Moments
 
-<!-- Insights captured in your own words—these cement understanding -->
+### 2026-08-23: JSON repair is just brace counting
+The simplest way to fix truncated JSON is to count opening vs closing braces and add the missing ones. Close strings first (add `"`), then arrays (`]`), then objects (`}`). It's not perfect but handles the most common truncation pattern from LLMs.
 
 ## Session Log
 
