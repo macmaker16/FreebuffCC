@@ -44,7 +44,7 @@ export class ToolRegistry {
   constructor(config?: ToolRegistryConfig) {
     this.config = {
       maxToolsPerModel: {},
-      defaultMaxTools: 15,
+      defaultMaxTools: 25,
       enableRetries: true,
       maxRetries: 2,
       ...config,
@@ -152,7 +152,9 @@ export class ToolRegistry {
       'run_command': 3,
       'git_status': 4, 'git_diff': 4, 'git_add': 4, 'git_commit': 4,
       'find_definitions': 5, 'find_references': 5,
-      'task': 6, 'delegate_complex_code': 7,
+      'browser_navigate': 6, 'browser_screenshot': 6, 'browser_get_content': 6,
+      'browser_get_styles': 6, 'browser_evaluate': 6, 'browser_wait': 6, 'browser_console': 6,
+      'task': 7, 'delegate_complex_code': 8,
     };
 
     // Sort by priority (lower = more important), then by usage frequency

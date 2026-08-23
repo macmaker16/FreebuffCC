@@ -15,6 +15,7 @@
 import express, { Request, Response } from 'express';
 import Store from 'electron-store';
 import { Orchestrator, MultiModelRouter } from './agent';
+import { BrowserSkill, playwrightReady } from './agent/skills/browser';
 import { ConversationStore, ConversationMessage } from './conversations';
 import { SlashCommandHandler } from './agent/slash-commands';
 import { TokenTracker } from './agent/token-tracker';
@@ -95,30 +96,24 @@ const BLOCKED_COMMANDS = [
 // SYSTEM PROMPT
 // ============================================================================
 
-const SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant. You have access to tools that let you interact with the user's filesystem and terminal.
+const SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant.
 
 YOUR JOB: When the user asks you to build, create, fix, or modify software, you MUST use your tools to actually do the work. Do NOT just output plans or code blocks — actually execute them.
 
 HOW TO WORK:
 1. Analyze what the user wants.
 2. Break it into concrete steps.
-3. Execute each step using your tools (write_file, read_file, run_command).
+3. Execute each step using your tools.
 4. After each action, check the result and continue.
 5. When everything is done, give the user a summary.
 
 RULES:
-- ALWAYS use write_file to create files. Never just show code.
-- ALWAYS use run_command to install dependencies, run builds, and execute commands.
-- Use read_file to check existing files before modifying them.
-- Create files in a logical order (dependencies first).
-- After writing all files, run the appropriate commands to verify everything works.
+- Always use your tools to create files, run commands, and read files.
+- Never just show code — actually create the files.
 - If a command fails, read the error output and fix the issue.
 - Be thorough — complete the entire task before stopping.
-- When using run_command, prefer short, focused commands over long chains.
 - Your workspace is: {{WORKSPACE}}
-{{PROJECT_CONTEXT}}
-
-IMPORTANT: You MUST call tools. Do NOT output code blocks as your response. Use write_file to create files, and run_command to execute them.`;
+{{PROJECT_CONTEXT}}`;
 
 function getSystemPrompt(projectContext: string = ''): string {
   const workspace = getWorkspaceDir();
@@ -188,6 +183,35 @@ async function executeRunCommand(args: { command: string; cwd?: string }): Promi
   }
 }
 
+async function executeListFiles(args: any): Promise<string> {
+  const dirPath = args.dir_path ? resolvePath(args.dir_path) : getWorkspaceDir();
+  try {
+    const { readdir } = require('fs/promises');
+    const { join, relative } = require('path');
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    const files = entries.filter((e: any) => !e.name.startsWith('.') && e.name !== 'node_modules')
+      .map((e: any) => e.isDirectory() ? e.name + '/' : e.name);
+    return files.join('\n') || '(empty directory)';
+  } catch (err: any) {
+    return `ERROR: ${err.message}`;
+  }
+}
+
+async function executeSearchFiles(args: any): Promise<string> {
+  try {
+    let cmd = `rg -n --max-count 5 "${args.pattern.replace(/"/g, '\\"')}"`;
+    if (args.file_pattern) cmd += ` -g "${args.file_pattern}"`;
+    cmd += ` --max-columns 200`;
+    const { stdout } = await execAsync(cmd, { cwd: getWorkspaceDir(), timeout: 15000, maxBuffer: 1024 * 1024 });
+    const lines = stdout.trim().split('\n').filter(Boolean);
+    const max = args.max_results || 20;
+    if (lines.length > max) return lines.slice(0, max).join('\n') + `\n... [${lines.length} total]`;
+    return lines.length > 0 ? lines.join('\n') : 'No matches found';
+  } catch (err: any) {
+    return `ERROR: ${err.message}`;
+  }
+}
+
 async function executeTool(toolCall: ToolCall): Promise<string> {
   let args: any;
   try { args = JSON.parse(toolCall.function.arguments); } catch { return `ERROR: Failed to parse tool arguments`; }
@@ -195,6 +219,19 @@ async function executeTool(toolCall: ToolCall): Promise<string> {
     case 'write_file': return executeWriteFile(args);
     case 'read_file': return executeReadFile(args);
     case 'run_command': return executeRunCommand(args);
+    case 'list_files': return executeListFiles(args);
+    case 'search_files': return executeSearchFiles(args);
+    case 'browser_navigate':
+    case 'browser_screenshot':
+    case 'browser_get_content':
+    case 'browser_get_styles':
+    case 'browser_evaluate':
+    case 'browser_wait':
+    case 'browser_console': {
+      const ctx = { sessionId: 'agentic', workspace: getWorkspaceDir(), model: '', messages: [], iteration: 0, maxIterations: 1, tools: new Map(), metadata: {} };
+      const result = await BrowserSkill.execute(toolCall.function.name, args, ctx);
+      return result.output || result.error || '(no output)';
+    }
     default: return `ERROR: Unknown tool "${toolCall.function.name}"`;
   }
 }
@@ -205,7 +242,7 @@ async function executeTool(toolCall: ToolCall): Promise<string> {
 
 async function callLLM(baseUrl: string, apiKey: string, authPrefix: string, model: string, messages: ChatMessage[], tools?: any[]): Promise<any> {
   const body: any = { model, messages, max_tokens: 4096, temperature: 0.3 };
-  if (tools && tools.length > 0) { body.tools = tools; body.tool_choice = 'auto'; }
+  if (tools && tools.length > 0) { body.tools = tools; }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
   try {

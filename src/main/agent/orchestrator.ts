@@ -55,6 +55,7 @@ import { FileSystemSkill } from './skills/filesystem';
 import { GitSkill } from './skills/git';
 import { WorkflowMetaTools } from './skills/workflow';
 import { SemanticCodeSearchSkill } from './skills/semantic-search';
+import { BrowserSkill, closeBrowser, playwrightReady } from './skills/browser';
 import { MemorySearchSkill, setMemoryStore } from './skills/memory-search';
 import { loadProjectInstructions } from './memory/instructions';
 import { BUILTIN_SKILLS, detectSkillTrigger, expandSkillArgs } from './skills/builtin-skills';
@@ -105,6 +106,7 @@ After executing, verify your work:
 ## TOOLS AVAILABLE
 **File System:** read_file, write_file, edit_file, list_files, glob_files, search_files
 **Semantic Search:** find_definitions, find_references, find_implementations, call_graph
+**Browser:** browser_navigate, browser_screenshot, browser_get_content, browser_get_styles, browser_evaluate, browser_wait, browser_console
 **Terminal:** run_command
 **Git:** git_status, git_diff, git_add, git_commit, git_log, git_branch
 **Workflow:** create_branch, commit_changes, open_pull_request, update_ticket_status
@@ -154,8 +156,8 @@ export class Orchestrator {
     this.toolRegistry = new ToolRegistry({ enableRetries: true, maxRetries: 2 });
 
     // Configure per-model tool limits (Llama 3.1 on NIM works best with ≤12)
-    this.toolRegistry.setModelLimit('meta/llama-3.1-8b-instruct', 10);
-    this.toolRegistry.setModelLimit('meta/llama-3.1-70b-instruct', 12);
+    this.toolRegistry.setModelLimit('meta/llama-3.1-8b-instruct', 18);
+    this.toolRegistry.setModelLimit('meta/llama-3.1-70b-instruct', 20);
 
     this.memoryPlugin = new MemoryPlugin(config.workspace);
     this.errorRecoveryPlugin = new ErrorRecoveryPlugin();
@@ -185,7 +187,8 @@ export class Orchestrator {
     this.projectInstructions = await loadProjectInstructions(this.config.workspace) || '';
 
     // Register all internal skills with the tool registry
-    const skills = [TerminalSkill, FileSystemSkill, GitSkill, WorkflowMetaTools, SemanticCodeSearchSkill];
+    const skills: AgentSkill[] = [TerminalSkill, FileSystemSkill, GitSkill, WorkflowMetaTools, SemanticCodeSearchSkill];
+    if (playwrightReady) skills.push(BrowserSkill);
     for (const skill of skills) {
       this.toolRegistry.registerSkill(skill);
     }
@@ -298,6 +301,7 @@ export class Orchestrator {
   async shutdown(): Promise<void> {
     this.subAgentManager.cancelAll();
     await this.mcp.disconnectAll();
+    await closeBrowser();
   }
 
   // ==========================================================================
@@ -358,7 +362,9 @@ export class Orchestrator {
     const allDefs = Array.from(tools.values()).map(t => t.definition);
     const modelDefs = this.toolRegistry.getForModel(this.config.model);
     body.tools = modelDefs.length > 0 ? modelDefs : allDefs.slice(0, 12);
-    if (body.tools.length > 0) body.tool_choice = 'auto';
+    if (body.tools.length > 0) {
+      body.tool_choice = 'auto';
+    }
 
     // Retry with exponential backoff
     const MAX_LLM_RETRIES = 3;
