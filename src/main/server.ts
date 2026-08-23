@@ -259,6 +259,224 @@ async function callLLM(baseUrl: string, apiKey: string, authPrefix: string, mode
 }
 
 // ============================================================================
+// STREAMING LLM CALL
+// ============================================================================
+
+interface StreamCallbacks {
+  onToken?: (token: string) => void;
+  onToolCall?: (toolCall: ToolCall) => void;
+  onComplete?: (usage: { prompt: number; completion: number }) => void;
+}
+
+async function callLLMStream(
+  baseUrl: string, apiKey: string, authPrefix: string, model: string,
+  messages: ChatMessage[], tools: any[] | undefined, callbacks: StreamCallbacks,
+): Promise<{ content: string; toolCalls: ToolCall[]; usage: { prompt: number; completion: number } }> {
+  const body: any = { model, messages, max_tokens: 4096, temperature: 0.3, stream: true };
+  if (tools && tools.length > 0) { body.tools = tools; }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+
+  let fullContent = '';
+  const toolCallsMap: Record<number, { id: string; name: string; arguments: string }> = {};
+  let usage = { prompt: 0, completion: 0 };
+
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `${authPrefix}${apiKey}` },
+      body: JSON.stringify(body), signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) throw new Error(`API ${response.status}: ${await response.text().catch(() => '')}`);
+    if (!response.body) throw new Error('No response body');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Process complete SSE lines
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(data);
+          const choice = parsed.choices?.[0];
+          if (!choice) continue;
+
+          const delta = choice.delta;
+
+          // Content tokens
+          if (delta?.content) {
+            fullContent += delta.content;
+            callbacks.onToken?.(delta.content);
+          }
+
+          // Tool calls (streamed in chunks)
+          if (delta?.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index || 0;
+              if (!toolCallsMap[idx]) {
+                toolCallsMap[idx] = { id: tc.id || `call_${Date.now()}_${idx}`, name: '', arguments: '' };
+              }
+              if (tc.id) toolCallsMap[idx].id = tc.id;
+              if (tc.function?.name) toolCallsMap[idx].name = tc.function.name;
+              if (tc.function?.arguments) toolCallsMap[idx].arguments += tc.function.arguments;
+            }
+          }
+
+          // Usage (usually in the last chunk)
+          if (parsed.usage) {
+            usage = { prompt: parsed.usage.prompt_tokens || 0, completion: parsed.usage.completion_tokens || 0 };
+          }
+        } catch { /* skip malformed JSON */ }
+      }
+    }
+
+    // Emit tool calls as complete objects
+    const toolCalls: ToolCall[] = Object.values(toolCallsMap).map(tc => ({
+      id: tc.id, type: 'function' as const,
+      function: { name: tc.name, arguments: tc.arguments },
+    }));
+    for (const tc of toolCalls) {
+      callbacks.onToolCall?.(tc);
+    }
+
+    callbacks.onComplete?.(usage);
+    return { content: fullContent, toolCalls, usage };
+  } catch (err: any) {
+    clearTimeout(timeout);
+    throw err;
+  }
+}
+
+// ============================================================================
+// STREAMING AGENTIC LOOP (SSE generator)
+// ============================================================================
+
+async function* agenticLoopStream(
+  baseUrl: string, apiKey: string, authPrefix: string, model: string, provider: string,
+  userMessages: ChatMessage[], conversationId?: string,
+): AsyncGenerator<{ event: string; data: any }> {
+  const session = `session_${Date.now()}`;
+  const projectContext = projectDetector ? (await projectDetector.detect()).instructions : '';
+  const messages: ChatMessage[] = [
+    { role: 'system', content: getSystemPrompt(projectContext) },
+    ...userMessages,
+  ];
+
+  yield { event: 'agent_start', data: {
+    model, provider,
+    prompt: userMessages.filter(m => m.role === 'user').pop()?.content?.substring(0, 200) || '',
+  }};
+
+  let iterations = 0;
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+  let conversationIdOut = conversationId;
+
+  while (iterations < MAX_ITERATIONS) {
+    iterations++;
+    yield { event: 'iteration_start', data: { iteration: iterations, maxIterations: MAX_ITERATIONS } };
+    yield { event: 'llm_call', data: { iteration: iterations, model } };
+
+    // Stream the LLM response
+    let streamContent = '';
+    let streamToolCalls: ToolCall[] = [];
+    let usage = { prompt: 0, completion: 0 };
+
+    const result = await callLLMStream(baseUrl, apiKey, authPrefix, model, messages, TOOL_DEFINITIONS, {
+      onToken: (token) => {
+        streamContent += token;
+        // We can't yield from a callback, so we store and will emit after
+      },
+      onToolCall: (tc) => { streamToolCalls.push(tc); },
+      onComplete: (u) => { usage = u; },
+    });
+
+    streamContent = result.content;
+    streamToolCalls = result.toolCalls;
+    usage = result.usage;
+
+    // Now yield the accumulated tokens as a single event
+    if (streamContent) {
+      yield { event: 'token_stream', data: { content: streamContent, iteration: iterations } };
+    }
+
+    // Track token usage
+    totalPromptTokens += usage.prompt;
+    totalCompletionTokens += usage.completion;
+    yield { event: 'token_usage', data: {
+      iteration: iterations,
+      prompt: usage.prompt, completion: usage.completion,
+      totalPrompt: totalPromptTokens, totalCompletion: totalCompletionTokens,
+    }};
+
+    // Push assistant message to context
+    messages.push({ role: 'assistant', content: streamContent, tool_calls: streamToolCalls.length > 0 ? streamToolCalls : undefined });
+
+    // No tool calls — agent is done
+    if (streamToolCalls.length === 0) {
+      console.log(`[Agent-Stream] Completed after ${iterations} iterations`);
+      yield { event: 'agent_end', data: {
+        iterations, totalToolCalls: messages.filter(m => m.role === 'tool').length,
+        totalPromptTokens, totalCompletionTokens, conversationId: conversationIdOut,
+      }};
+      return;
+    }
+
+    // Execute tool calls
+    for (const toolCall of streamToolCalls) {
+      let args: any = {};
+      try { args = JSON.parse(toolCall.function.arguments); } catch { /* ignore */ }
+      yield { event: 'tool_start', data: { tool: toolCall.function.name, args, iteration: iterations } };
+
+      const toolResult = await executeTool(toolCall);
+      const isSuccess = !toolResult.startsWith('ERROR');
+      yield { event: 'tool_complete', data: {
+        tool: toolCall.function.name, success: isSuccess,
+        outputPreview: toolResult.substring(0, 300), iteration: iterations,
+      }};
+
+      messages.push({ role: 'tool', content: toolResult, tool_call_id: toolCall.id });
+
+      // Save tool execution to conversation
+      if (conversationIdOut && conversationStore) {
+        await conversationStore.addMessage(conversationIdOut, {
+          id: `tool_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          role: 'tool', content: toolResult, timestamp: Date.now(),
+        });
+      }
+    }
+  }
+
+  // Hit limit — get final summary
+  messages.push({ role: 'system', content: `[System: Max iterations (${MAX_ITERATIONS}) reached. Give final answer.]` });
+  const finalResponse = await callLLM(baseUrl, apiKey, authPrefix, model, messages);
+  if (finalResponse.choices?.[0]?.message) {
+    messages.push({ role: 'assistant', content: finalResponse.choices[0].message.content });
+    yield { event: 'token_stream', data: { content: finalResponse.choices[0].message.content, iteration: iterations } };
+  }
+
+  yield { event: 'agent_end', data: {
+    iterations, totalToolCalls: messages.filter(m => m.role === 'tool').length,
+    totalPromptTokens, totalCompletionTokens, conversationId: conversationIdOut,
+  }};
+}
+
+// ============================================================================
 // AGENTIC LOOP
 // ============================================================================
 
@@ -628,6 +846,96 @@ export async function startExpressApp(): Promise<express.Express> {
       console.error('[Orchestrator] Error:', err.message);
       res.status(500).json({ error: `Agent error: ${err.message}` });
     }
+  });
+
+  // ==========================================================================
+  // POST /api/agent/stream — Streaming agent endpoint (SSE)
+  // ==========================================================================
+  app.post('/api/agent/stream', async (req: Request, res: Response) => {
+    const { model, messages, provider: ep, conversationId } = req.body;
+    if (!model || !messages) return res.status(400).json({ error: 'model and messages required' });
+
+    const pk = (ep && ep !== 'auto' && PROVIDERS[ep]) ? ep : detectProvider(model);
+    const provider = PROVIDERS[pk];
+    const apiKey = provider.getApiKey();
+    if (!apiKey) return res.status(400).json({ error: `No API key for ${pk}` });
+
+    // Set up SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    const sendEvent = (event: string, data: any) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    let convId = conversationId;
+    try {
+      // Create conversation
+      if (!convId) {
+        const conv = await conversationStore.create(
+          messages.filter((m: any) => m.role === 'user').pop()?.content?.substring(0, 80) || 'New conversation',
+          model, pk, getWorkspaceDir(),
+        );
+        convId = conv.id;
+      }
+
+      // Save user message
+      const lastUserMsg = messages.filter((m: any) => m.role === 'user').pop();
+      await conversationStore.addMessage(convId, {
+        id: `msg_${Date.now()}`, role: 'user',
+        content: lastUserMsg?.content || '', timestamp: Date.now(),
+      });
+
+      sendEvent('session', { conversationId: convId, model, provider: pk });
+
+      // Run the streaming agentic loop
+      let finalContent = '';
+      let finalIterations = 0;
+      let finalToolCalls = 0;
+      let totalPromptTokens = 0;
+      let totalCompletionTokens = 0;
+
+      for await (const evt of agenticLoopStream(
+        getBaseUrl(provider), apiKey, provider.authPrefix, model, pk, messages, convId,
+      )) {
+        sendEvent(evt.event, evt.data);
+
+        // Track final results
+        if (evt.event === 'agent_end') {
+          finalIterations = evt.data.iterations;
+          finalToolCalls = evt.data.totalToolCalls;
+          totalPromptTokens = evt.data.totalPromptTokens;
+          totalCompletionTokens = evt.data.totalCompletionTokens;
+        }
+        if (evt.event === 'token_stream') {
+          finalContent = evt.data.content;
+        }
+      }
+
+      // Save final assistant message
+      if (finalContent) {
+        const usage = tokenTracker.record(totalPromptTokens, totalCompletionTokens, model, pk);
+        await conversationStore.addMessage(convId, {
+          id: `msg_${Date.now()}`, role: 'assistant', content: finalContent, timestamp: Date.now(),
+          tokens: { prompt: totalPromptTokens, completion: totalCompletionTokens, total: totalPromptTokens + totalCompletionTokens },
+          cost: usage.estimatedCost,
+        });
+        sendEvent('metadata', {
+          iterations: finalIterations, totalToolCalls: finalToolCalls,
+          tokens: { prompt: totalPromptTokens, completion: totalCompletionTokens },
+          cost: usage.estimatedCost, conversationId: convId,
+        });
+      }
+
+      sendEvent('done', {});
+    } catch (err: any) {
+      sendEvent('error', { message: err.message });
+    }
+
+    res.end();
   });
 
   // ==========================================================================

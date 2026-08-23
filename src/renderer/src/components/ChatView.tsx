@@ -12,7 +12,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Bot, User, Trash2, AlertCircle, FolderOpen, Folder, Check, Wifi, WifiOff, MessageSquare, Search, Clock, Coins, ChevronDown, ChevronRight, X, Copy, CheckCheck, Terminal, FileCode, Zap, History } from 'lucide-react';
 import { Model, ModelStatus, ChatMessage } from '../types';
-import { sendAgentMessage, generateId, fetchConversations, getConversation, deleteConversation, searchConversations, ConversationSummary, detectProject, getStats } from '../services/api';
+import { sendAgentMessage, sendAgentMessageStream, generateId, fetchConversations, getConversation, deleteConversation, searchConversations, ConversationSummary, detectProject, getStats } from '../services/api';
 
 interface Props {
   activeModel: Model | null;
@@ -111,54 +111,59 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
 
     try {
       const apiMessages = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }));
-      const res = await sendAgentMessage(apiMessages, activeModel.id, activeModel.provider, activeConversationId || undefined);
 
-      // Handle slash command responses
-      if (res.slash_command) {
-        if (res.action === 'clear') {
-          setMessages([]);
-          setActiveConversationId(null);
-          setLoading(false);
-          return;
-        }
-        if (res.action === 'load_session' && res.conversation) {
-          const convMessages: ChatMessage[] = res.conversation.messages.map((m: any) => ({
-            id: m.id || generateId(), role: m.role === 'assistant' ? 'assistant' : 'user',
-            content: m.content, timestamp: m.timestamp,
-          }));
-          setMessages(convMessages);
-          setActiveConversationId(res.conversation.id);
-          setLoading(false);
-          return;
-        }
-      }
+      // Add a placeholder assistant message that we'll stream into
+      const assistantId = generateId();
+      setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: '', timestamp: Date.now() }]);
 
-      const content = res.choices?.[0]?.message?.content || 'No response';
-      const meta = res.agent_metadata;
+      let streamedContent = '';
+      let abortRef: (() => void) | null = null;
 
-      // Build tool activity summary
-      if (meta) {
-        setToolActivity([
-          { name: `${meta.iterations} iterations`, status: 'completed' },
-          { name: `${meta.total_tool_calls} tool calls`, status: 'completed' },
-          ...(meta.tokens ? [{ name: `${meta.tokens.prompt + meta.tokens.completion} tokens`, status: 'info' }] : []),
-          ...(meta.cost ? [{ name: `$${meta.cost.toFixed(4)}`, status: 'info' }] : []),
-        ]);
-        setTokenInfo({ tokens: meta.tokens?.prompt + meta.tokens?.completion || 0, cost: meta.cost || 0 });
-      }
-
-      const assistantMsg: ChatMessage = {
-        id: generateId(), role: 'assistant', content, timestamp: Date.now(),
-      };
-      setMessages(prev => [...prev, assistantMsg]);
-      setActiveConversationId(meta?.conversation_id || activeConversationId);
+      const { abort } = sendAgentMessageStream(
+        apiMessages, activeModel.id, activeModel.provider, activeConversationId || undefined,
+        {
+          onToken: (token) => {
+            streamedContent += token;
+            setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: streamedContent } : m));
+          },
+          onToolStart: (tool, args, iteration) => {
+            setToolActivity(prev => [...prev, { name: tool, status: 'running', detail: iteration.toString() }]);
+          },
+          onToolComplete: (tool, success, output, iteration) => {
+            setToolActivity(prev => prev.map(t => t.status === 'running' && t.name === tool ? { ...t, status: success ? 'completed' : 'failed' } : t));
+          },
+          onIterationStart: (iteration, max) => {
+            setToolActivity(prev => [...prev, { name: `Iteration ${iteration}/${max}`, status: 'running' }]);
+          },
+          onMetadata: (meta) => {
+            if (meta) {
+              setToolActivity([
+                { name: `${meta.iterations} iterations`, status: 'completed' },
+                { name: `${meta.totalToolCalls} tool calls`, status: 'completed' },
+                ...(meta.tokens ? [{ name: `${meta.tokens.prompt + meta.tokens.completion} tokens`, status: 'info' as const }] : []),
+                ...(meta.cost ? [{ name: `$${meta.cost.toFixed(4)}`, status: 'info' as const }] : []),
+              ]);
+              setTokenInfo({ tokens: meta.tokens?.prompt + meta.tokens?.completion || 0, cost: meta.cost || 0 });
+              setActiveConversationId(meta.conversationId || activeConversationId);
+            }
+          },
+          onError: (msg) => {
+            setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: `Error: ${msg}` } : m));
+          },
+          onDone: () => {
+            setLoading(false);
+            setToolActivity([]);
+          },
+        },
+      );
+      abortRef = abort;
     } catch (err: any) {
       setMessages(prev => [...prev, {
         id: generateId(), role: 'assistant', content: `Error: ${err.message || 'Failed'}`, timestamp: Date.now(),
       }]);
+      setLoading(false);
+      setToolActivity([]);
     }
-    setLoading(false);
-    setToolActivity([]);
     inputRef.current?.focus();
   };
 

@@ -66,6 +66,89 @@ export async function sendAgentMessage(
 }
 
 // ============================================================================
+// STREAMING AGENT
+// ============================================================================
+
+export interface StreamCallbacks {
+  onToken?: (content: string) => void;
+  onToolStart?: (tool: string, args: any, iteration: number) => void;
+  onToolComplete?: (tool: string, success: boolean, outputPreview: string, iteration: number) => void;
+  onIterationStart?: (iteration: number, maxIterations: number) => void;
+  onPhaseChange?: (phase: string, iteration: number) => void;
+  onTokenUsage?: (prompt: number, completion: number, totalPrompt: number, totalCompletion: number) => void;
+  onMetadata?: (meta: any) => void;
+  onError?: (message: string) => void;
+  onDone?: () => void;
+}
+
+export function sendAgentMessageStream(
+  messages: Array<{ role: string; content: string }>,
+  model: string, provider?: string, conversationId?: string, callbacks?: StreamCallbacks,
+): { abort: () => void } {
+  const controller = new AbortController();
+
+  (async () => {
+    const res = await fetch(`${baseUrl()}/api/agent/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, provider: provider || 'auto', messages, conversationId }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      callbacks?.onError?.(err.error || 'Agent failed');
+      return;
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) { callbacks?.onError?.('No response body'); return; }
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        let currentEvent = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            const dataStr = line.slice(6).trim();
+            if (!dataStr || !currentEvent) continue;
+            try {
+              const data = JSON.parse(dataStr);
+              switch (currentEvent) {
+                case 'token_stream': callbacks?.onToken?.(data.content); break;
+                case 'tool_start': callbacks?.onToolStart?.(data.tool, data.args, data.iteration); break;
+                case 'tool_complete': callbacks?.onToolComplete?.(data.tool, data.success, data.outputPreview, data.iteration); break;
+                case 'iteration_start': callbacks?.onIterationStart?.(data.iteration, data.maxIterations); break;
+                case 'phase_change': callbacks?.onPhaseChange?.(data.phase, data.iteration); break;
+                case 'token_usage': callbacks?.onTokenUsage?.(data.prompt, data.completion, data.totalPrompt, data.totalCompletion); break;
+                case 'metadata': callbacks?.onMetadata?.(data); break;
+                case 'error': callbacks?.onError?.(data.message); break;
+                case 'done': callbacks?.onDone?.(); break;
+              }
+            } catch { /* skip */ }
+            currentEvent = '';
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') callbacks?.onError?.(err.message);
+    }
+  })();
+
+  return { abort: () => controller.abort() };
+}
+
+// ============================================================================
 // CONVERSATIONS
 // ============================================================================
 
