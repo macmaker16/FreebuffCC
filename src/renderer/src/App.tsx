@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Cpu, MessageSquare, Settings, Zap, Circle, Activity } from 'lucide-react';
+import { Cpu, MessageSquare, Settings, Zap, Circle, Activity, Download, Check, RefreshCw, AlertCircle } from 'lucide-react';
 import ModelManager from './components/ModelManager';
 import ChatView from './components/ChatView';
 import SettingsView from './components/SettingsView';
@@ -32,6 +32,7 @@ function App() {
   const autoTestDone = useRef(false);
   const fallbackNotification = useRef<string | null>(null);
   const [fallbackMsg, setFallbackMsg] = useState<string | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<any>(null);
 
   // Initialize API on mount
   useEffect(() => {
@@ -40,6 +41,11 @@ function App() {
       const port = await window.electronAPI.getServerPort();
       setServerPort(port);
     }).catch(console.error);
+
+    // Listen for auto-update events
+    window.electronAPI.onUpdateStatus((status) => {
+      setUpdateStatus(status);
+    });
   }, []);
 
   // Fetch models when API is ready
@@ -189,6 +195,37 @@ function App() {
             <p className="text-[10px] text-dark-400 truncate" title={activeModel.name}>
               → {activeModel.name}
             </p>
+          )}
+          {/* Auto-Update Indicator */}
+          {updateStatus?.status === 'available' && (
+            <button
+              onClick={() => window.electronAPI.checkForUpdates()}
+              className="flex items-center gap-1.5 text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+            >
+              <Download size={10} />
+              <span>v{updateStatus.version} available</span>
+            </button>
+          )}
+          {updateStatus?.status === 'downloading' && (
+            <div className="flex items-center gap-1.5">
+              <RefreshCw size={10} className="animate-spin text-blue-400" />
+              <span className="text-[10px] text-blue-400">Downloading {Math.round(updateStatus.percent || 0)}%</span>
+              <div className="flex-1 h-1 bg-dark-700 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-500 rounded-full transition-all duration-300" style={{ width: `${updateStatus.percent || 0}%` }} />
+              </div>
+            </div>
+          )}
+          {updateStatus?.status === 'ready' && (
+            <button
+              onClick={() => window.electronAPI.installUpdate()}
+              className="flex items-center gap-1.5 text-[10px] text-green-400 hover:text-green-300 cursor-pointer"
+            >
+              <Check size={10} />
+              <span>Restart to update</span>
+            </button>
+          )}
+          {updateStatus?.status === 'up-to-date' && (
+            <p className="text-[10px] text-dark-500">Up to date</p>
           )}
         </div>
       </aside>

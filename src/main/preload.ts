@@ -22,6 +22,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onPermissionRequest: (callback: (request: { id: string; description: string; type: string }) => void) => {
     ipcRenderer.on('permission-request', (_event, request) => callback(request));
   },
+
+  // Auto-Update
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  onUpdateStatus: (callback: (status: any) => void) => {
+    ipcRenderer.on('update-status', (_event, status) => callback(status));
+  },
 });
 
 export interface ElectronAPI {
@@ -34,4 +42,10 @@ export interface ElectronAPI {
   selectFolder: () => Promise<string | null>;
   respondPermission: (response: { requestId: string; action: string; alwaysAllow?: boolean }) => Promise<{ success: boolean }>;
   onPermissionRequest: (callback: (request: { id: string; description: string; type: string }) => void) => void;
+
+  // Auto-Update
+  checkForUpdates: () => Promise<{ success: boolean }>;
+  installUpdate: () => Promise<{ success: boolean }>;
+  getAppVersion: () => Promise<string>;
+  onUpdateStatus: (callback: (status: any) => void) => void;
 }

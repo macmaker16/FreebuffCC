@@ -13,6 +13,7 @@ import * as path from 'path';
 import { createServer, Server } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { startExpressApp } from './server';
+import { autoUpdater, UpdateInfo } from 'electron-updater';
 import { agentEventBus } from './agent/event-bus';
 
 let mainWindow: BrowserWindow | null = null;
@@ -170,12 +171,75 @@ function setupIPC(): void {
     if (pending) { pendingPermissions.delete(response.requestId); pending.resolve(response); }
     return { success: true };
   });
+
+  // ==========================================================================
+  // AUTO-UPDATE
+  // ==========================================================================
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = { info: (msg: string) => console.log(`[Update] ${msg}`), warn: (msg: string) => console.warn(`[Update] ${msg}`), error: (msg: string) => console.error(`[Update] ${msg}`) } as any;
+
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[Update] Checking for updates...');
+    mainWindow?.webContents.send('update-status', { status: 'checking' });
+  });
+
+  autoUpdater.on('update-available', (info: UpdateInfo) => {
+    console.log(`[Update] Available: ${info.version}`);
+    mainWindow?.webContents.send('update-status', {
+      status: 'available', version: info.version,
+      releaseDate: info.releaseDate, releaseNotes: info.releaseNotes,
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('[Update] Up to date');
+    mainWindow?.webContents.send('update-status', { status: 'up-to-date' });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    mainWindow?.webContents.send('update-status', {
+      status: 'downloading', percent: progress.percent,
+      bytesPerSecond: progress.bytesPerSecond, transferred: progress.transferred, total: progress.total,
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    console.log(`[Update] Downloaded: ${info.version} — ready to install`);
+    mainWindow?.webContents.send('update-status', { status: 'ready', version: info.version });
+  });
+
+  autoUpdater.on('error', (err: Error) => {
+    console.error('[Update] Error:', err.message);
+    mainWindow?.webContents.send('update-status', { status: 'error', message: err.message });
+  });
+
+  ipcMain.handle('check-for-updates', () => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.error('[Update] Check failed:', err.message);
+    });
+    return { success: true };
+  });
+
+  ipcMain.handle('install-update', () => {
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
+  });
+
+  ipcMain.handle('get-app-version', () => app.getVersion());
 }
 
 app.whenReady().then(async () => {
   await startInternalServer();
   setupIPC();
   createWindow();
+
+  // Check for updates after 5 seconds (dev mode skips this)
+  if (!process.env.NODE_ENV || process.env.NODE_ENV === 'production') {
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch(() => {});
+    }, 5000);
+  }
 });
 
 app.on('window-all-closed', async () => {

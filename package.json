@@ -13,11 +13,14 @@
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
     "start": "electron .",
-    "package": "npm run build && electron-builder --win portable --config",
+    "package": "npm run build && electron-builder --win --config",
+    "package:portable": "npm run build && electron-builder --win portable --config",
+    "package:nsis": "npm run build && electron-builder --win nsis --config",
     "agent:headless": "node dist/main/headless.js"
   },
   "dependencies": {
     "electron-store": "^8.1.0",
+    "electron-updater": "^6.8.9",
     "express": "^4.18.2",
     "lucide-react": "^0.294.0",
     "playwright-core": "^1.62.1",
@@ -43,19 +46,48 @@
   "build": {
     "appId": "com.macmaker16.michaelangelo",
     "productName": "Michaelangelo",
+    "copyright": "Copyright © 2026 macmaker16",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "assets"
     },
     "files": [
       "dist/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "!node_modules/playwright-core/**",
+      "!node_modules/playwright/**"
     ],
+    "extraResources": [],
+    "publish": {
+      "provider": "github",
+      "owner": "macmaker16",
+      "repo": "Michaelangelo",
+      "releaseType": "release"
+    },
     "win": {
-      "target": "portable",
-      "icon": "assets/icon.ico"
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "Michaelangelo-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Michaelangelo",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "allowElevation": true,
+      "installerLanguages": ["en_US"]
     },
     "portable": {
-      "artifactName": "Michaelangelo.exe"
+      "artifactName": "Michaelangelo-${version}-portable.${ext}"
     }
   }
 }
