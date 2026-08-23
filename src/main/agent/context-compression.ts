@@ -276,9 +276,104 @@ export class ContextCompressionEngine {
    */
   reset(): void {
     this.compressionCount = 0;
+    this.hotFiles.clear();
   }
 
   getCompressionCount(): number {
     return this.compressionCount;
+  }
+
+  // ==========================================================================
+  // REHYDRATION SUPPORT (Claude Code style)
+  // ==========================================================================
+
+  /** Track hot files that are frequently accessed */
+  private hotFiles = new Map<string, { path: string; lastRead: number; readCount: number }>();
+
+  /**
+   * Record that a file was read — used to determine which files to rehydrate.
+   */
+  recordFileAccess(filePath: string): void {
+    const existing = this.hotFiles.get(filePath);
+    if (existing) {
+      existing.readCount++;
+      existing.lastRead = Date.now();
+    } else {
+      this.hotFiles.set(filePath, { path: filePath, lastRead: Date.now(), readCount: 1 });
+    }
+  }
+
+  /**
+   * Get the top N most frequently accessed files ("hot path" files).
+   */
+  getHotFiles(n = 3): string[] {
+    return [...this.hotFiles.values()]
+      .sort((a, b) => b.readCount - a.readCount)
+      .slice(0, n)
+      .map(f => f.path);
+  }
+
+  /**
+   * After compression, rehydrate context by re-reading the top hot files.
+   * This preserves agent momentum without token bloat.
+   *
+   * @param fileReader - async function that reads a file by path, returns content or null
+   * @param hotFiles - explicit list of file paths to rehydrate (overrides auto-detection)
+   */
+  async rehydrate(
+    fileReader: (path: string) => Promise<string | null>,
+    hotFiles?: string[],
+  ): Promise<ChatMessage[]> {
+    const paths = hotFiles || this.getHotFiles(3);
+    const messages: ChatMessage[] = [];
+
+    for (const filePath of paths) {
+      try {
+        const content = await fileReader(filePath);
+        if (content) {
+          // Only include first 50 lines to save tokens
+          const lines = content.split('\n');
+          const truncated = lines.slice(0, 50).join('\n');
+          const suffix = lines.length > 50 ? `\n... (${lines.length - 50} more lines)` : '';
+          messages.push({
+            role: 'system',
+            content: `[REHYDRATED] File: ${filePath}\n\n${truncated}${suffix}`,
+          });
+        }
+      } catch {
+        // Skip unreadable files
+      }
+    }
+
+    return messages;
+  }
+
+  /**
+   * Combined compress + rehydrate pass.
+   * Compresses old context, then injects hot file summaries.
+   */
+  async maybeCompressAndRehydrate(
+    messages: ChatMessage[],
+    fileReader: (path: string) => Promise<string | null>,
+    llmCompressor?: (text: string) => Promise<string>,
+  ): Promise<{ messages: ChatMessage[]; stats: CompressionStats; rehydratedFiles: string[] }> {
+    // Step 1: Compress
+    const { messages: compressed, stats } = await this.maybeCompress(messages, llmCompressor);
+
+    // Step 2: Rehydrate if compression occurred
+    let rehydratedFiles: string[] = [];
+    if (stats.triggered) {
+      const rehydrationMsgs = await this.rehydrate(fileReader);
+      if (rehydrationMsgs.length > 0) {
+        // Insert rehydrated files after the compression summary
+        const insertIdx = compressed.findIndex(m => m.content?.includes('ACTION HISTORY & LEARNINGS'));
+        const insertAt = insertIdx >= 0 ? insertIdx + 1 : Math.min(2, compressed.length);
+        compressed.splice(insertAt, 0, ...rehydrationMsgs);
+        rehydratedFiles = this.getHotFiles(3);
+        console.log(`[ContextCompression] Rehydrated ${rehydratedFiles.length} hot files after compression`);
+      }
+    }
+
+    return { messages: compressed, stats, rehydratedFiles };
   }
 }

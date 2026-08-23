@@ -63,45 +63,64 @@ import { SubAgentManager } from './subagent/manager';
 import { PermissionManager, PermissionRequest } from './permissions';
 import { ContextCompressionEngine } from './context-compression';
 import { MultiModelRouter } from './multi-model-router';
+import { RepoMapGenerator, getRepoMapGenerator } from './repo-map';
+import { CascadingPlanner } from './planner';
+import { OutputInterceptor } from './output-interceptor';
+import { SubagentDispatch } from './dispatch-agent';
 
 // ============================================================================
 // SYSTEM PROMPT
 // ============================================================================
 
-const AGENT_SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant built with a production-grade agentic harness.
+const AGENT_SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant with a production-grade agentic harness.
+
+--- STATIC RULES (cache these, do not modify) ---
 
 ## YOUR MISSION
-Complete the user's task by working through 4 phases autonomously. Use your tools — never output code blocks.
+Complete the user's task by executing real actions via tools. Never output code blocks without creating files.
 
 ## THE 4-PHASE LOOP
 
 ### Phase 1: GATHER CONTEXT
-Before making any changes, understand the codebase:
-- Use list_files / glob_files to explore the project structure
-- Use read_file to read relevant existing files
-- Use find_definitions / find_references to understand code relationships
-- Use search_files to locate related patterns
+Before making changes, explore the codebase using the Repo Map below.
+- Use read_file to examine specific files (with line_range for large files)
+- Use find_definitions / find_references for code relationships
+- Use search_files / glob_files to locate patterns
+- NEVER skip this phase — always understand before editing
 
 ### Phase 2: PLAN
-Based on gathered context, formulate a concrete plan:
-- Identify exactly which files need to change
-- Determine the order of changes (dependencies first)
+Formulate a concrete execution plan:
+- List exactly which files to change and what changes
+- Order changes by dependency (foundations first)
+- Use dispatch_agent for parallel multi-file analysis
 - Consider edge cases and error handling
-- You can delegate complex sub-tasks using the task tool
 
 ### Phase 3: EXECUTE
-Make the changes:
-- Use write_file for new files
-- Use edit_file for modifying existing files (preferred — surgical edits)
-- Use run_command to install deps, run builds, etc.
-- Use git tools for version control
+Make changes surgically:
+- Use edit_file for existing files (search/replace blocks, NOT full rewrites)
+- Use write_file ONLY for brand-new files
+- Use run_command for builds, tests, installs
+- Verify each change before moving to the next
 
 ### Phase 4: VERIFY
-After executing, verify your work:
-- Read the files you created/modified to confirm correctness
-- Run tests with run_command
-- If verification fails → go back to Phase 3 and fix
-- Only return to the user when verification passes
+Confirm your work:
+- Read modified files to check correctness
+- Run tests: run_command with test/build commands
+- If verification fails → diagnose and go back to Phase 3
+- Only respond to user when ALL verifications pass
+
+## TOOL USAGE RULES
+- Prefer edit_file over write_file for existing files
+- Use read_file with line_range for large files (e.g. "100-200")
+- After any file write/edit, verify with run_command (build, test, lint)
+- If a command fails, READ the full error output and fix it
+- Use dispatch_agent for independent sub-tasks that can run in parallel
+- Use delegate_complex_code for difficult multi-file refactors
+
+## EDIT PROTOCOL (CRITICAL)
+The edit_file tool uses SEARCH/REPLACE. Always provide the EXACT original text to find.
+NEVER use full-file rewrites — they truncate code and cause the '// rest of code' hallucination.
+Read the file first, identify the exact lines to change, then use edit_file.
 
 ## TOOLS AVAILABLE
 **File System:** read_file, write_file, edit_file, list_files, glob_files, search_files
@@ -110,18 +129,17 @@ After executing, verify your work:
 **Terminal:** run_command
 **Git:** git_status, git_diff, git_add, git_commit, git_log, git_branch
 **Workflow:** create_branch, commit_changes, open_pull_request, update_ticket_status
-**Agent:** task (spawn sub-agents for parallel work), delegate_complex_code (offload to frontier model)
+**Agent:** dispatch_agent (spawn parallel sub-agents), delegate_complex_code (offload to frontier model)
 **Memory:** search_memory
 
-## RULES
-- ALWAYS use tools. Never just show code or plans.
-- Prefer edit_file over write_file for existing files.
-- Always verify after executing (Phase 4).
-- If something fails, diagnose and fix it — don't give up.
-- Use task tool when you need parallel analysis of multiple files.
-- Use delegate_complex_code for complex multi-file refactors.
-- Your workspace is: {{WORKSPACE}}
-{{PROJECT_INSTRUCTIONS}}`;
+--- DYNAMIC CONTENT (changes per session, append below) ---
+
+{{REPO_MAP}}
+{{PROJECT_INSTRUCTIONS}}
+{{SESSION_MEMORY}}
+
+## WORKSPACE
+Your workspace is: {{WORKSPACE}}`;
 
 // ============================================================================
 // ORCHESTRATOR
@@ -142,6 +160,10 @@ export class Orchestrator {
   private toolRegistry: ToolRegistry;
   private sessionId: string;
   private projectInstructions: string = '';
+  private repoMapGenerator: RepoMapGenerator;
+  private planner: CascadingPlanner;
+  private outputInterceptor: OutputInterceptor;
+  private subagentDispatch: SubagentDispatch;
   private onPermissionRequest?: (request: PermissionRequest) => void;
 
   constructor(config: OrchestratorConfig) {
@@ -154,6 +176,16 @@ export class Orchestrator {
     this.permissionManager = new PermissionManager();
     this.compressionEngine = new ContextCompressionEngine({ tokenThreshold: 8000 });
     this.toolRegistry = new ToolRegistry({ enableRetries: true, maxRetries: 2 });
+    this.repoMapGenerator = getRepoMapGenerator(config.workspace);
+    this.planner = new CascadingPlanner({ autoApproveThreshold: 0 });
+    this.outputInterceptor = new OutputInterceptor({ maxTokens: 1500 });
+    this.subagentDispatch = new SubagentDispatch({
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      authPrefix: config.authPrefix,
+      model: config.model,
+      workspace: config.workspace,
+    });
 
     // Configure per-model tool limits (Llama 3.1 on NIM works best with ≤12)
     this.toolRegistry.setModelLimit('meta/llama-3.1-8b-instruct', 18);
@@ -245,6 +277,29 @@ export class Orchestrator {
         },
       },
       execute: async (args) => this.handleTaskSpawn(args),
+      source: 'internal',
+    });
+
+    // Register dispatch_agent tool (Claude Code-style subagent dispatch)
+    this.toolRegistry.register({
+      name: 'dispatch_agent',
+      description: 'Dispatch an isolated sub-agent to handle a research or analysis task in the background. Returns results when complete.',
+      definition: {
+        type: 'function',
+        function: {
+          name: 'dispatch_agent',
+          description: 'Dispatch a focused sub-agent for research, analysis, or multi-file investigation.',
+          parameters: {
+            type: 'object',
+            properties: {
+              description: { type: 'string', description: 'Brief description of the task' },
+              prompt: { type: 'string', description: 'Detailed prompt for the sub-agent' },
+            },
+            required: ['description', 'prompt'],
+          },
+        },
+      },
+      execute: async (args) => this.subagentDispatch.dispatch(args.description, args.prompt),
       source: 'internal',
     });
 
@@ -448,7 +503,23 @@ export class Orchestrator {
     await this.lifecycle.fire('onPreToolUse', hookCtx);
 
     console.log(`[Orchestrator] Tool: ${toolCall.function.name}`);
-    const result = await agentTool.execute(args, ctx);
+    let result = await agentTool.execute(args, ctx);
+
+    // Output interception: truncate large terminal output to save tokens
+    if (result.output && result.output.length > 6000) {
+      const intercepted = await this.outputInterceptor.intercept(
+        result.output, toolCall.function.name, args,
+      );
+      if (intercepted.wasIntercepted) {
+        console.log(`[Orchestrator] Output intercepted: ${intercepted.tokensSaved} tokens saved`);
+        result = { ...result, output: intercepted.output };
+      }
+    }
+
+    // Track file access for context rehydration
+    if (args.file_path) {
+      this.compressionEngine.recordFileAccess(args.file_path);
+    }
 
     // Post-action hooks
     hookCtx.toolResult = result;
@@ -461,17 +532,33 @@ export class Orchestrator {
   // SYSTEM PROMPT
   // ==========================================================================
 
-  private buildSystemPrompt(): string {
+  private async buildSystemPrompt(): Promise<string> {
     let prompt = AGENT_SYSTEM_PROMPT.replace('{{WORKSPACE}}', this.config.workspace);
+
+    // Inject project instructions
     if (this.projectInstructions) {
-      prompt = prompt.replace('{{PROJECT_INSTRUCTIONS}}', `\n## Project Instructions\n${this.projectInstructions}\n`);
+      prompt = prompt.replace('{{PROJECT_INSTRUCTIONS}}', `\n## Project Instructions (from .michaelangelo.md / CLAUDE.md)\n${this.projectInstructions}\n`);
     } else {
       prompt = prompt.replace('{{PROJECT_INSTRUCTIONS}}', '');
     }
+
+    // Inject repo map (compressed AST elision — token-efficient)
+    try {
+      const repoMap = await this.repoMapGenerator.generateCompressedMap(2500);
+      prompt = prompt.replace('{{REPO_MAP}}', repoMap);
+    } catch (err: any) {
+      console.error(`[Orchestrator] Repo map generation failed:`, err.message);
+      prompt = prompt.replace('{{REPO_MAP}}', '');
+    }
+
+    // Inject session memory
     if (this.config.enableMemory) {
       const ctx = this.memoryPlugin.getStore().getRecentContext(3);
-      if (ctx) prompt += `\n\n## Recent Session Context\n${ctx}`;
+      prompt = prompt.replace('{{SESSION_MEMORY}}', ctx ? `\n## Recent Session Context\n${ctx}` : '');
+    } else {
+      prompt = prompt.replace('{{SESSION_MEMORY}}', '');
     }
+
     return prompt;
   }
 
@@ -484,7 +571,7 @@ export class Orchestrator {
     const toolExecutions: OrchestratorResult['toolExecutions'] = [];
     const allMessages: ChatMessage[] = [];
 
-    allMessages.push({ role: 'system', content: this.buildSystemPrompt() });
+    allMessages.push({ role: 'system', content: await this.buildSystemPrompt() });
     allMessages.push(...userMessages);
 
     const tools = this.toolRegistry.getAll();
@@ -642,9 +729,15 @@ export class Orchestrator {
       await this.memoryPlugin.getStore().save();
     }
 
+    const interceptorStats = this.outputInterceptor.getStats();
+    console.log(`[Orchestrator] Session complete: ${totalIterations} iterations, ${toolExecutions.length} tool calls, ${interceptorStats.totalTokensSaved} tokens saved via output interception`);
+
     return {
       messages: allMessages, iterations: totalIterations, toolExecutions, memoryEntries: [],
-      compressionStats: { compressed: this.compressionEngine.getCompressionCount(), tokensSaved: totalCompressionSavings },
+      compressionStats: {
+        compressed: this.compressionEngine.getCompressionCount(),
+        tokensSaved: totalCompressionSavings + interceptorStats.totalTokensSaved,
+      },
       phaseHistory,
     };
   }
