@@ -88,6 +88,7 @@ export function sendAgentMessageStream(
   const controller = new AbortController();
 
   (async () => {
+    try {
     const res = await fetch(`${baseUrl()}/api/agent/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -143,6 +144,11 @@ export function sendAgentMessageStream(
     } catch (err: any) {
       if (err.name !== 'AbortError') callbacks?.onError?.(err.message);
     }
+    } catch (err: any) {
+      // Outer catch: handles fetch failures, network errors, baseUrl() throws
+      if (err.name !== 'AbortError') callbacks?.onError?.(err.message || 'Connection failed');
+    }
+    callbacks?.onDone?.();
   })();
 
   return { abort: () => controller.abort() };
