@@ -340,6 +340,44 @@ async function callLLM(baseUrl: string, apiKey: string, authPrefix: string, mode
 // TEXT-BASED TOOL CALL PARSER (for NIM Llama models that output tool calls as text)
 // ============================================================================
 
+/**
+ * Attempt to repair truncated/incomplete JSON by closing open braces, brackets, and strings.
+ * Returns repaired string or null if unrepairable.
+ */
+function repairJson(str: string): string | null {
+  let result = str.trim();
+  // Remove trailing comma before closing brace
+  result = result.replace(/,\s*$/, '');
+
+  // Count open vs close braces/brackets
+  let braces = 0, brackets = 0, inString = false, escape = false;
+  for (const ch of result) {
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') braces++;
+    if (ch === '}') braces--;
+    if (ch === '[') brackets++;
+    if (ch === ']') brackets--;
+  }
+
+  // If we're inside a string, close it
+  if (inString) result += '"';
+  // Close any unclosed arrays
+  while (brackets > 0) { result += ']'; brackets--; }
+  // Close any unclosed objects
+  while (braces > 0) { result += '}'; braces--; }
+
+  // Validate
+  try {
+    JSON.parse(result);
+    return result;
+  } catch {
+    return null;
+  }
+}
+
 function parseToolCallsFromText(content: string): ToolCall[] {
   const toolCalls: ToolCall[] = [];
   const toolNames = TOOL_DEFINITIONS.map(t => t.function.name);
@@ -352,8 +390,6 @@ function parseToolCallsFromText(content: string): ToolCall[] {
     const name = match[1];
     if (!toolNames.includes(name)) continue;
     try {
-      // Try to parse the full JSON object containing name and parameters
-      const fullMatch = content.substring(match.index, match.index + match[0].length);
       // Find the complete JSON by looking for matching braces
       let braceDepth = 0;
       let endIdx = match.index;
@@ -364,15 +400,30 @@ function parseToolCallsFromText(content: string): ToolCall[] {
           if (braceDepth === 0) { endIdx = i + 1; break; }
         }
       }
-      const jsonStr = content.substring(match.index, endIdx);
-      const parsed = JSON.parse(jsonStr);
+      let jsonStr = content.substring(match.index, endIdx);
+      let parsed: any;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        // Attempt JSON repair for truncated output
+        const repaired = repairJson(jsonStr);
+        if (repaired) {
+          parsed = JSON.parse(repaired);
+          console.log(`[TextParser] Repaired truncated JSON for tool: ${name}`);
+        } else {
+          console.warn(`[TextParser] Failed to parse or repair JSON for tool: ${name}`);
+          continue;
+        }
+      }
       const params = parsed.parameters || parsed;
       toolCalls.push({
         id: `text_call_${Date.now()}_${toolCalls.length}`,
         type: 'function',
         function: { name, arguments: JSON.stringify(params) },
       });
-    } catch { /* skip malformed JSON */ }
+    } catch (err: any) {
+      console.warn(`[TextParser] Skipping malformed tool call: ${err.message}`);
+    }
   }
 
   // Pattern 2: XML-style tool calls
@@ -383,11 +434,22 @@ function parseToolCallsFromText(content: string): ToolCall[] {
       const name = match[1];
       if (!toolNames.includes(name)) continue;
       try {
-        const params = JSON.parse(match[2]);
+        let argsStr = match[2];
+        let parsed: any;
+        try {
+          parsed = JSON.parse(argsStr);
+        } catch {
+          const repaired = repairJson(argsStr);
+          if (repaired) {
+            parsed = JSON.parse(repaired);
+          } else {
+            continue;
+          }
+        }
         toolCalls.push({
           id: `text_call_${Date.now()}_${toolCalls.length}`,
           type: 'function',
-          function: { name, arguments: JSON.stringify(params) },
+          function: { name, arguments: JSON.stringify(parsed) },
         });
       } catch { /* skip */ }
     }
