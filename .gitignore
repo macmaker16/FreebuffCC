@@ -9,3 +9,7 @@ release/
 .DS_Store
 Thumbs.db
 *.log
+test-*.png
+test-*.txt
+*.blockmap
+builder-debug.yml

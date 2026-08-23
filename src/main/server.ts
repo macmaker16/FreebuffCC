@@ -860,15 +860,24 @@ export async function startExpressApp(): Promise<express.Express> {
     const apiKey = provider.getApiKey();
     if (!apiKey) return res.status(400).json({ error: `No API key for ${pk}` });
 
-    // Set up SSE headers
+    // Set up SSE headers (MUST be before flushHeaders)
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
+    // Disable TCP buffering so events are sent immediately
+    if (req.socket) req.socket.setNoDelay(true);
     res.flushHeaders();
 
+    let clientDisconnected = false;
+    res.on('close', () => { clientDisconnected = true; });
+
     const sendEvent = (event: string, data: any) => {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      if (clientDisconnected || res.writableEnded) return;
+      try {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        if (typeof (res as any).flush === 'function') (res as any).flush();
+      } catch { clientDisconnected = true; }
     };
 
     let convId = conversationId;
@@ -935,7 +944,8 @@ export async function startExpressApp(): Promise<express.Express> {
       sendEvent('error', { message: err.message });
     }
 
-    res.end();
+    // Wait for the last write to flush before ending
+    res.write('', () => { res.end(); });
   });
 
   // ==========================================================================

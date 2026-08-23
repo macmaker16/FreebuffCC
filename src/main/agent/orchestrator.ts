@@ -217,7 +217,8 @@ export class Orchestrator {
           description: mcpTool.function.function.description,
           definition: mcpTool.function,
           execute: (args) => this.mcp.callTool(mcpTool.serverId, fnName.split('__')[1], args)
-            .then(output => ({ success: true, output })),
+            .then(output => ({ success: true, output }))
+            .catch(err => ({ success: false, output: '', error: `MCP call failed: ${err.message}` })),
           source: 'mcp',
           mcpServerId: mcpTool.serverId,
         });
