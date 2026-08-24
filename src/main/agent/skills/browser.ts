@@ -400,6 +400,51 @@ async function executeBrowserTool(
         };
       }
 
+      case 'browser_click': {
+        const selector = args.selector as string;
+        if (!selector) return { success: false, output: '', error: 'selector required' };
+        console.log(`[Browser] Clicking: ${selector}`);
+        await page.waitForSelector(selector, { timeout: 10000 });
+        await page.click(selector);
+        await page.waitForTimeout(500); // wait for navigation/effects
+        return { success: true, output: `Clicked: ${selector}\nURL: ${page.url()}\nTitle: ${await page.title()}` };
+      }
+
+      case 'browser_type': {
+        const sel = args.selector as string;
+        const text = args.text as string;
+        if (!sel || !text) return { success: false, output: '', error: 'selector and text required' };
+        console.log(`[Browser] Typing into: ${sel}`);
+        await page.waitForSelector(sel, { timeout: 10000 });
+        await page.fill(sel, text);
+        return { success: true, output: `Typed ${text.length} chars into ${sel}` };
+      }
+
+      case 'browser_select': {
+        const sel2 = args.selector as string;
+        const value = args.value as string;
+        if (!sel2 || !value) return { success: false, output: '', error: 'selector and value required' };
+        await page.waitForSelector(sel2, { timeout: 10000 });
+        await page.selectOption(sel2, value);
+        return { success: true, output: `Selected '${value}' in ${sel2}` };
+      }
+
+      case 'browser_scroll': {
+        const direction = (args.direction as string) || 'down';
+        const pixels = (args.pixels as number) || 500;
+        await page.evaluate(`window.scrollBy(0, ${direction === 'up' ? '-' : ''}${pixels})`);
+        return { success: true, output: `Scrolled ${direction} ${pixels}px` };
+      }
+
+      case 'browser_wait_for': {
+        const sel3 = args.selector as string;
+        const timeout = (args.timeout_ms as number) || 10000;
+        if (!sel3) return { success: false, output: '', error: 'selector required' };
+        console.log(`[Browser] Waiting for: ${sel3}`);
+        await page.waitForSelector(sel3, { timeout });
+        return { success: true, output: `Element found: ${sel3}` };
+      }
+
       case 'browser_close': {
         await browserManager.close();
         return { success: true, output: 'Browser closed.' };

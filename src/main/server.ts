@@ -280,7 +280,9 @@ const SYSTEM_PROMPT_STATIC = `You are Michaelangelo, an expert AI coding agent: 
 - write_file / edit_file — mutations. These pass through visual diff review; a DENIED review means: do not re-attempt the same edit.
 - run_command — shell. Destructive system commands are blocked; other commands may require one-click user approval.
 - web_search / web_fetch / web_lookup — current external information via DuckDuckGo (free, no key).
-- browser_navigate / browser_screenshot / browser_get_content / browser_evaluate / browser_close — headless browser for visual analysis. Use after creating a UI to verify rendering.
+- browser_navigate / browser_screenshot / browser_get_content / browser_evaluate / browser_close — headless browser for visual analysis.
+- browser_click / browser_type / browser_select / browser_scroll / browser_wait_for — E2E testing tools. Use to test web UIs: click buttons, fill forms, select options, scroll, wait for elements.
+- ensure_dependency — auto-detect and install missing tools (docker, node, python, etc.). Use when a required tool is not installed.
 - git_status / git_diff / git_stage / git_commit / git_branch / git_log — full git workflow. Stage changes, commit, create branches.
 - code_symbols — extract function/class/interface/import/export declarations from a file. Use to understand structure before editing.
 - diagnose_error — analyze error messages and stack traces. Reads the source file, shows context, suggests a fix.
@@ -764,6 +766,60 @@ async function executeDiagnoseError(args: { error_text: string; file_path?: stri
 // FIND FILES TOOL (enhanced directory listing)
 // ============================================================================
 
+// ============================================================================
+// DEPENDENCY AUTO-DETECT & INSTALL
+// ============================================================================
+
+async function executeEnsureDependency(args: { name: string; install_cmd?: string }): Promise<string> {
+  const name = args.name;
+  if (!name) return 'ERROR: name required';
+  // Check if already installed
+  try {
+    await execAsync(`which ${name} 2>/dev/null || where ${name} 2>NUL`, { timeout: 5000 });
+    return `SUCCESS: ${name} is already installed.`;
+  } catch { /* not installed */ }
+  // Try common install methods
+  const installCommands: Record<string, string[]> = {
+    docker: ['winget install Docker.DockerDesktop', 'choco install docker-desktop', 'brew install --cask docker'],
+    node: ['winget install OpenJS.NodeJS.LTS', 'choco install nodejs-lts'],
+    npm: ['winget install OpenJS.NodeJS.LTS', 'choco install nodejs-lts'],
+    python3: ['winget install Python.Python.3.12', 'choco install python3', 'brew install python3'],
+    python: ['winget install Python.Python.3.12', 'choco install python3'],
+    git: ['winget install Git.Git', 'choco install git', 'brew install git'],
+    java: ['winget install EclipseAdoptium.Temurin.21.JDK', 'choco install temurin21'],
+    rust: ['winget install Rustlang.Rustup', 'choco install rustup'],
+    go: ['winget install GoLang.Go', 'choco install golang'],
+    ruby: ['winget install RubyInstaller.Ruby', 'choco install ruby'],
+    gcc: ['winget install GnuWin32.Make', 'choco install mingw'],
+    make: ['choco install make', 'winget install GnuWin32.Make'],
+    cmake: ['winget install Kitware.CMake', 'choco install cmake'],
+    ffmpeg: ['winget install Gyan.FFmpeg', 'choco install ffmpeg'],
+    curl: ['winget install cURL.cURL', 'choco install curl'],
+    wget: ['winget install GnuWin32.Wget', 'choco install wget'],
+    postgres: ['winget install PostgreSQL.PostgreSQL.16', 'choco install postgresql'],
+    redis: ['winget install Redis.Redis', 'choco install redis-64'],
+    nginx: ['winget install Nginx.Nginx', 'choco install nginx'],
+  };
+  const customCmd = args.install_cmd;
+  const cmds = customCmd ? [customCmd] : (installCommands[name.toLowerCase()] || []);
+  if (cmds.length === 0) {
+    return `ERROR: ${name} not found and no known install method.\nTry: winget install ${name} or choco install ${name}`;
+  }
+  // Try each install method
+  for (const cmd of cmds) {
+    try {
+      console.log(`[Dep] Installing ${name}: ${cmd}`);
+      const { stdout, stderr } = await execAsync(cmd, { timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
+      // Verify installation
+      try {
+        await execAsync(`which ${name} 2>/dev/null || where ${name} 2>NUL`, { timeout: 5000 });
+        return `SUCCESS: ${name} installed via: ${cmd}\n\n${stdout.substring(0, 200)}`;
+      } catch { /* still not found, try next */ }
+    } catch (err: any) { console.log(`[Dep] ${cmd} failed: ${err.message}`); }
+  }
+  return `FAILED: Could not install ${name}. Tried: ${cmds.join(', ')}\nManual install may be required.`;
+}
+
 async function executeFindFiles(args: { pattern?: string; dir?: string }): Promise<string> {
   const dir = args.dir ? resolvePath(args.dir) : getWorkspaceDir();
   const pattern = args.pattern || '*';
@@ -881,6 +937,16 @@ async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
       await BrowserSkill.execute('browser_close', args, { sessionId: 'agentic', workspace: getWorkspaceDir(), model: '', messages: [], iteration: 0, maxIterations: 1, tools: new Map(), metadata: {} });
       return { output: 'Browser closed.' };
     }
+    case 'browser_click':
+    case 'browser_type':
+    case 'browser_select':
+    case 'browser_scroll':
+    case 'browser_wait_for': {
+      const ctx = { sessionId: 'agentic', workspace: getWorkspaceDir(), model: '', messages: [], iteration: 0, maxIterations: 1, tools: new Map(), metadata: {} };
+      const result = await BrowserSkill.execute(toolCall.function.name, args, ctx);
+      return { output: result.output || result.error || '(no output)' };
+    }
+    case 'ensure_dependency': return { output: await executeEnsureDependency(args) };
     default: return { output: `ERROR: Unknown tool "${toolCall.function.name}"` };
   }
 }
@@ -1481,6 +1547,12 @@ const TOOL_DEFINITIONS = [
   { type: 'function', function: { name: 'browser_get_content', description: 'Get the text content of the current page or a specific element.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector (default: entire page)' }, max_length: { type: 'number', description: 'Max characters (default 5000)' } }, required: [] } } },
   { type: 'function', function: { name: 'browser_evaluate', description: 'Evaluate JavaScript in the page context. Useful for querying DOM state, checking element counts, measuring sizes.', parameters: { type: 'object', properties: { expression: { type: 'string', description: 'JavaScript expression to evaluate' } }, required: ['expression'] } } },
   { type: 'function', function: { name: 'browser_close', description: 'Close the headless browser. Call when done with visual analysis.', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'browser_click', description: 'Click an element by CSS selector. Use for buttons, links, and interactive elements during E2E testing.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of element to click' } }, required: ['selector'] } } },
+  { type: 'function', function: { name: 'browser_type', description: 'Type text into an input field by CSS selector.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of input element' }, text: { type: 'string', description: 'Text to type' } }, required: ['selector', 'text'] } } },
+  { type: 'function', function: { name: 'browser_select', description: 'Select an option from a dropdown by CSS selector and value.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of select element' }, value: { type: 'string', description: 'Option value to select' } }, required: ['selector', 'value'] } } },
+  { type: 'function', function: { name: 'browser_scroll', description: 'Scroll the page up or down.', parameters: { type: 'object', properties: { direction: { type: 'string', description: 'up or down (default: down)' }, pixels: { type: 'number', description: 'Pixels to scroll (default: 500)' } }, required: [] } } },
+  { type: 'function', function: { name: 'browser_wait_for', description: 'Wait for a CSS selector to appear on the page. Use after navigation or clicks.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector to wait for' }, timeout_ms: { type: 'number', description: 'Timeout in ms (default 10000)' } }, required: ['selector'] } } },
+  { type: 'function', function: { name: 'ensure_dependency', description: 'Check if a tool (docker, node, python, etc.) is installed. If not, install it automatically. Returns install instructions or confirmation.', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Tool/command name to check (e.g., docker, node, npm, python3)' }, install_cmd: { type: 'string', description: 'Optional custom install command' } }, required: ['name'] } } },
   { type: 'function', function: { name: 'git_status', description: 'Show the working tree status. Use before committing to see what changed.', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'git_diff', description: 'Show file changes not yet staged. Pass file_path for a specific file.', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Optional specific file to diff' } }, required: [] } } },
   { type: 'function', function: { name: 'git_stage', description: 'Stage files for commit using git add.', parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'string' }, description: 'Array of file paths to stage' } }, required: ['files'] } } },
