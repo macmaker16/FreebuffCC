@@ -1,82 +1,226 @@
 # Michaelangelo
 
-A standalone Windows desktop application for interacting with AI models through OpenRouter and NVIDIA NIM APIs. Built with Electron, React, TypeScript, and an internal Express proxy server.
+**The open-source AI coding agent that runs on your desktop.**
+
+A standalone Windows application that gives you Claude Code-level capabilities using free and local AI models. Write code, run commands, browse the web, test websites, and build entire projects — all from a single desktop app.
 
 [![CI](https://github.com/macmaker16/Michaelangelo/actions/workflows/ci.yml/badge.svg)](https://github.com/macmaker16/Michaelangelo/actions/workflows/ci.yml)
 ![Electron](https://img.shields.io/badge/Electron-28-47848f)
 ![React](https://img.shields.io/badge/React-18-61dafb)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)
 ![Tailwind](https://img.shields.io/badge/Tailwind-3-06b6d4)
-![Express](https://img.shields.io/badge/Express-4-000000)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-[![Download](https://img.shields.io/badge/Download-Michaelangelo.exe-blue)](https://github.com/macmaker16/Michaelangelo/releases/latest)
+[![Download Installer](https://img.shields.io/badge/Download-Installer-blue)](https://github.com/macmaker16/Michaelangelo/releases/latest)
+[![Download Portable](https://img.shields.io/badge/Download-Portable-purple)](https://github.com/macmaker16/Michaelangelo/releases/latest)
 
 ---
 
-## Overview
+## What Is Michaelangelo?
 
-Michaelangelo is a local desktop client that acts as a secure proxy between you and AI model providers. Instead of sending API keys directly from a browser, all requests route through a lightweight Express server running inside the Electron app.
+Michaelangelo is an **autonomous AI coding agent** that doesn't just chat — it **writes files, runs commands, tests websites, and builds entire projects** by itself. It connects to free AI model providers (NVIDIA NIM, OpenRouter, Ollama local models) and gives them superpowers with 42 built-in tools.
 
-**Key benefits:**
-- Your API keys never leave your machine
-- No CORS issues — the Express proxy handles all external requests
-- Clean, modern UI with model browsing, testing, and chat
-- Single portable `.exe` — no installation required
+### Quick Demo
+```
+You: "Create a React landing page with a hero section, pricing table, and contact form"
+
+Michaelangelo:
+  1. Creates project structure (package.json, index.html, src/)
+  2. Writes all React components
+  3. Installs dependencies (npm install)
+  4. Starts dev server and takes a screenshot
+  5. Finds broken links and fixes them
+  6. Runs tests to verify everything works
+  7. Plays a notification chime when done
+```
 
 ---
 
 ## Features
 
-### Settings
-- Securely input and store OpenRouter and NVIDIA NIM API keys
-- Keys are persisted locally using `electron-store`
-- Visual status indicators show which providers are configured
+### 🤖 Agentic Tool Execution
+Michaelangelo uses a **4-phase execution loop** (Gather → Plan → Execute → Verify) that lets it autonomously chain multiple tool calls:
 
-### Model Manager
-- Automatically fetches available models from OpenRouter (200+ models)
-- Curated list of popular NVIDIA NIM models (Nemotron, Llama, Mistral, etc.)
-- Models grouped by provider with search/filter
-- **Test button** — sends a quick "Hello world" prompt to verify the model and API key work
-- **Select button** — sets a model as active for chat
+| Category | Tools |
+|----------|-------|
+| **File System** | read, write, edit, list, glob, search, find |
+| **Terminal** | run_command, ensure_dependency (auto-installs Docker, npm, etc.) |
+| **Git** | status, diff, stage, commit, branch, log |
+| **Web** | web_search, web_fetch, web_lookup |
+| **Browser (Playwright)** | navigate, screenshot, click, type, fill, hover, scroll, PDF, cookies, local storage, emulation, auth |
+| **Link Checking** | crawl site for broken links, auto-fix in source files |
+| **Code Intelligence** | symbol search, error diagnosis |
+| **Agent** | create_plan, todo_write, dispatch_sub_agent |
+| **Design** | generate_ui, create_theme, check_design, responsive_check |
 
-### Chat
-- Displays the active model and provider at the top
-- Sends messages through the internal Express proxy
-- Supports streaming responses (SSE)
-- Markdown-friendly text rendering
-- Conversation history within the session
+### 🎨 Impeccable UI/UX Design System
+Build production-ready UIs with built-in design skills:
+- **Design Landing** — full landing page with hero, features, testimonials, CTA
+- **Design Dashboard** — admin dashboard with sidebar, charts, tables
+- **Design Form** — beautiful forms with validation and micro-interactions
+- **Design Theme** — complete design system with tokens and variables
+- **Responsive Check** — audit and fix mobile/tablet/desktop layouts
+
+### 🧪 Claude Code Superpowers
+Built-in engineering skills inspired by Anthropic's best practices:
+
+| Skill | Trigger | What It Does |
+|-------|---------|-------------|
+| 🧪 TDD | `/tdd` | Red-Green-Refactor loop — write tests first |
+| 🐛 Debug | `/debug` | 6-phase systematic bug diagnosis |
+| 🔍 Review | `/review-code` | Spec compliance, edge cases, performance review |
+| 🏗️ Architect | `/architect` | Dependency analysis and architecture improvements |
+| 🔬 Investigate | `/investigate` | Root cause tracing from stack traces |
+| ✅ Verify | `/verify` | Run tests + build after every change |
+| 📝 Plan | `/plan` | Structured execution plan before code changes |
+| ▶️ Execute | `/execute` | Run plan step-by-step with verification |
+| 🔄 Refactor | `/refactor` | Safe refactor with test coverage |
+
+### 📊 20+ Slash Commands
+
+| Category | Commands |
+|----------|----------|
+| **Session** | `/compact`, `/clear`, `/export`, `/cost`, `/sessions`, `/resume` |
+| **Project** | `/init`, `/config`, `/memory`, `/lang`, `/persona` |
+| **Agent** | `/model`, `/review`, `/test`, `/fix`, `/build`, `/run`, `/commit`, `/branch`, `/template`, `/compare`, `/explain`, `/deps`, `/test-gen`, `/format` |
+| **Design** | `/design-landing`, `/design-dashboard`, `/design-form`, `/design-card`, `/design-theme`, `/design-responsive`, `/design-accessibility`, `/design-animation` |
+| **Review** | `/coderabbit` |
+| **Audit** | `/audit <url>` — full site crawl for broken links |
+| **Info** | `/help` |
+
+### 🧩 Plugin Marketplace
+16 built-in plugins + custom plugin support:
+
+| Plugin | Category |
+|--------|----------|
+| GitHub Integration | Create repos, open PRs, manage issues |
+| Docker Manager | Build, run, compose stacks |
+| Database Tools | Query, migrate, schema management |
+| Test Runner | Jest, Vitest, Pytest with coverage |
+| Security Scanner | Dependency vulnerabilities, secret detection |
+| API Testing | REST and GraphQL request builder |
+| Slack / Notion / Linear | Productivity integrations |
+| Sentry / Vercel / Supabase | DevOps and deployment |
+| AWS Tools | S3, Lambda, CloudFormation |
+
+### 🌐 Multi-Provider Support
+Connect to any AI provider — cloud or local:
+
+| Provider | Models | Cost |
+|----------|--------|------|
+| **NVIDIA NIM** | Llama 3.1, Nemotron, Mistral, Gemma | Free (1000 credits/mo) |
+| **OpenRouter** | 200+ models (GPT-4o, Claude, Gemini, Llama) | Pay-per-use |
+| **OpenAI** | GPT-4o, GPT-4o-mini | Pay-per-use |
+| **Anthropic** | Claude 3.5 Sonnet, Haiku | Pay-per-use |
+| **DeepSeek** | DeepSeek Coder V2 | Pay-per-use |
+| **Google Gemini** | Gemini 1.5 Pro, Flash | Pay-per-use |
+| **Groq** | Llama 3, Mixtral (ultra-fast) | Free tier |
+| **Together AI** | Llama, Mixtral, Vicuna | Pay-per-use |
+| **Local (Ollama)** | Any model you download | Free forever |
+
+### 🖥️ Full Playwright Browser Automation
+The agent can interact with websites like a real user:
+- Navigate, click buttons, fill forms, take screenshots
+- Test responsive layouts on mobile/tablet/desktop
+- Emulate iPhone, iPad, or custom devices
+- Save cookies and local storage state
+- Export pages as PDF
+
+### 💡 Smart Features
+- **Auto-continue** — agent keeps working until all tasks are done
+- **Error recovery** — failed commands trigger automatic retry
+- **Context compression** — summarizes long conversations to stay in token limits
+- **Model fallback** — auto-switches to working model if current one goes offline
+- **Notification chime** — pleasant sound when agent finishes
+- **Dark/Light theme** — toggle with `Ctrl+Shift+T`
+- **Keyboard shortcuts** — `Ctrl+K` chat, `Ctrl+M` models, `Ctrl+D` dashboard
+- **Thinking display** — see the model's reasoning process
+- **Permission system** — approve/deny destructive operations
+
+---
+
+## Getting Started
+
+See **[STARTER_GUIDE.md](STARTER_GUIDE.md)** for a complete walkthrough with screenshots.
+
+### Quick Start
+1. Download the [installer](https://github.com/macmaker16/Michaelangelo/releases/latest) or [portable exe](https://github.com/macmaker16/Michaelangelo/releases/latest)
+2. Open Settings and add a free API key from [build.nvidia.com](https://build.nvidia.com)
+3. Go to Models and select a model (green dot = online)
+4. Start chatting — describe what you want to build!
+
+---
+
+## Installation for Developers
+
+### Prerequisites
+- **Node.js** 18 or later
+- **npm** 9 or later
+
+### Setup
+```bash
+git clone https://github.com/macmaker16/Michaelangelo.git
+cd Michaelangelo
+npm install
+```
+
+### Development
+```bash
+npm run dev
+```
+
+### Build
+```bash
+npm run build              # Build main + renderer
+npm run package            # Build + create portable exe
+```
+
+### Build Installer + Portable
+```bash
+npx electron-builder --win nsis portable
+```
+
+Output: `release/Michaelangelo-1.0.0-x64.exe` (installer) and `Michaelangelo-1.0.0-portable.exe`
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                   Michaelangelo (Electron)               │
-├──────────────────────────────────────────────────────┤
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐          │
-│  │  Model   │  │   Chat   │  │ Settings │          │
-│  │ Manager  │  │   View   │  │   View   │          │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘          │
-│       │             │             │                  │
-│       └─────────────┼─────────────┘                  │
-│                     │ fetch()                        │
-│       ┌─────────────▼─────────────┐                  │
-│       │   Express Proxy Server    │                  │
-│       │   (dynamic port, 127.0.0.1)│                 │
-│       └─────────────┬─────────────┘                  │
-│                     │                                │
-│       ┌─────────────┴─────────────┐                  │
-│       │      electron-store       │                  │
-│       │    (API key persistence)  │                  │
-└───────┼───────────────────────────┼──────────────────┘
-        │                           │
-        ▼                           ▼
-┌───────────────┐       ┌───────────────────┐
-│  OpenRouter   │       │    NVIDIA NIM     │
-│  (200+ models)│       │  (12 free models) │
-└───────────────┘       └───────────────────┘
+┌─────────────────────────────────────────────────────┐
+│              Michaelangelo (Electron)                 │
+├─────────────────────────────────────────────────────┤
+│  ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌─────────┐ │
+│  │  Chat   │ │ Models  │ │Dashboard │ │ Settings│ │
+│  │  View   │ │ Manager │ │  (Live)  │ │  View   │ │
+│  └────┬────┘ └────┬────┘ └────┬─────┘ └────┬────┘ │
+│       └───────────┼──────────┼─────────────┘       │
+│                   ▼          ▼                      │
+│  ┌────────────────────────────────────────────────┐ │
+│  │           Express Proxy Server                 │ │
+│  │  ┌──────────┐ ┌───────────┐ ┌──────────────┐  │ │
+│  │  │  Agent   │ │  Plugin   │ │  Slash Cmds  │  │ │
+│  │  │ Orchestr.│ │ Registry  │ │   Handler    │  │ │
+│  │  └──────────┘ └───────────┘ └──────────────┘  │ │
+│  │  ┌──────────┐ ┌───────────┐ ┌──────────────┐  │ │
+│  │  │ Browser  │ │  Memory   │ │  Token       │  │ │
+│  │  │ Manager  │ │  Store    │ │  Tracker     │  │ │
+│  │  └──────────┘ └───────────┘ └──────────────┘  │ │
+│  └────────────────────────────────────────────────┘ │
+│                   │ WebSocket (events)               │
+│                   ▼                                 │
+│  ┌────────────────────────────────────────────────┐ │
+│  │         WebSocket Dashboard (Live)             │ │
+│  └────────────────────────────────────────────────┘ │
+└───────────────────────┬─────────────────────────────┘
+                        │
+        ┌───────────────┼───────────────┐
+        ▼               ▼               ▼
+┌──────────┐   ┌──────────────┐  ┌──────────┐
+│ NVIDIA   │   │  OpenRouter  │  │  Ollama  │
+│ NIM      │   │  (200+ mods) │  │ (Local)  │
+│ (Free)   │   │              │  │          │
+└──────────┘   └──────────────┘  └──────────┘
 ```
 
 ---
@@ -88,122 +232,29 @@ Michaelangelo is a local desktop client that acts as a secure proxy between you 
 | **Electron 28** | Desktop application framework |
 | **React 18** | UI component library |
 | **TypeScript 5** | Type-safe JavaScript |
-| **Tailwind CSS 3** | Utility-first CSS styling |
-| **Express 4** | Internal HTTP proxy server |
-| **electron-store** | Persistent local storage for API keys |
+| **Tailwind CSS 3** | Utility-first CSS with dark/light themes |
+| **Express 4** | Internal HTTP/WebSocket proxy server |
+| **WebSocket (ws)** | Real-time dashboard event streaming |
+| **Playwright** | Headless browser automation |
+| **electron-store** | Persistent local storage (API keys, plugins, settings) |
 | **Vite 5** | Frontend build tool |
-| **electron-builder** | Windows packaging |
+| **electron-builder** | Windows packaging (NSIS + Portable) |
 | **Lucide React** | Icon library |
 
 ---
 
-## Prerequisites
+## API Endpoints
 
-- **Node.js** 18 or later
-- **npm** 9 or later (or yarn/pnpm)
-- **Windows** 10/11 (for building the `.exe`)
-
----
-
-## Quick Start
-
-### 1. Clone & Install
-
-```bash
-git clone https://github.com/macmaker16/Michaelangelo.git
-cd Michaelangelo
-npm install
-```
-
-### 2. Development Mode
-
-```bash
-npm run dev
-```
-
-This starts:
-- Vite dev server on `http://localhost:5173` (with hot reload)
-- Electron app with DevTools enabled
-- Express proxy on a dynamic port
-
-### 3. Build for Production
-
-```bash
-npm run build
-```
-
-### 4. Package as Portable Executable
-
-```bash
-npm run package
-```
-
-Output: `release/Michaelangelo.exe` (~70 MB, no installation needed)
-
----
-
-## Usage Guide
-
-### Step 1: Configure API Keys
-
-1. Open Michaelangelo
-2. Go to the **Settings** tab
-3. Enter your API key(s):
-   - **OpenRouter**: Get a free key at [openrouter.ai/keys](https://openrouter.ai/keys)
-   - **NVIDIA NIM**: Get a free key at [build.nvidia.com](https://build.nvidia.com) (1000 free credits/month)
-4. Click **Save Settings**
-
-### Step 2: Browse & Test Models
-
-1. Go to the **Models** tab
-2. Click **Refresh** to fetch available models
-3. Browse models grouped by provider
-4. Click **Test** on any model to verify it works
-5. Click **Select** to set it as your active model
-
-### Step 3: Chat
-
-1. Go to the **Chat** tab
-2. The active model is shown at the top
-3. Type your message and press **Enter**
-4. The response streams in from the provider through the Express proxy
-
----
-
-## Project Structure
-
-```
-Michaelangelo/
-├── src/
-│   ├── main/                          # Electron main process
-│   │   ├── main.ts                    # App entry, window, IPC, server lifecycle
-│   │   ├── preload.ts                 # Secure context bridge
-│   │   └── server.ts                  # Express proxy (OpenRouter + NIM)
-│   └── renderer/                      # React frontend
-│       ├── index.html                 # HTML entry
-│       └── src/
-│           ├── main.tsx               # React entry
-│           ├── App.tsx                # Root component + sidebar nav
-│           ├── components/
-│           │   ├── ModelManager.tsx    # Model list with test/select
-│           │   ├── ChatView.tsx        # Chat interface
-│           │   └── SettingsView.tsx    # API key configuration
-│           ├── services/
-│           │   └── api.ts             # Fetch wrapper for Express proxy
-│           ├── types/
-│           │   ├── index.ts           # Shared TypeScript types
-│           │   └── electron.d.ts      # Window.electronAPI types
-│           └── styles/
-│               └── globals.css        # Tailwind + custom animations
-├── assets/                            # App icons
-├── package.json                       # Dependencies & build config
-├── tsconfig.main.json                 # TypeScript config (main process)
-├── tsconfig.json                      # TypeScript config (renderer)
-├── vite.config.ts                     # Vite bundler config
-├── tailwind.config.js                 # Tailwind theme
-├── postcss.config.js                  # PostCSS config
-└── README.md                          # This file
-```
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/models` | List all available models |
+| `POST` | `/api/chat/completions` | Send chat with agent tool execution |
+| `GET` | `/api/conversations` | List saved conversations |
+| `GET` | `/api/stats` | Token usage and cost stats |
+| `GET` | `/api/skills` | List built-in skills |
+| `GET` | `/api/plugins` | List marketplace plugins |
+| `POST` | `/api/plugins/install` | Install a plugin |
+| `GET` | `/api/settings/status` | Check configured API keys |
 
 ---
 
@@ -211,54 +262,10 @@ Michaelangelo/
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start in development mode (hot reload) |
-| `npm run build` | Build main process + renderer for production |
+| `npm run dev` | Development mode (hot reload) |
+| `npm run build` | Build main + renderer for production |
 | `npm run start` | Run the built app |
-| `npm run package` | Build + package as portable Windows `.exe` |
-
----
-
-## How the Proxy Works
-
-1. **Startup**: Electron launches Express on a dynamic port (e.g., `3040`)
-2. **Settings**: API keys are saved to `electron-store` via IPC
-3. **Model Fetch**: Frontend calls `GET /api/models` → Express fetches from OpenRouter API
-4. **Chat**: Frontend calls `POST /api/chat/completions` → Express routes to the correct provider based on model ID
-5. **Provider Detection**: Model IDs starting with `nvidia/`, `meta/`, `mistralai/`, etc. go to NVIDIA NIM; everything else goes to OpenRouter
-6. **Shutdown**: When the app closes, Express server is gracefully stopped
-
----
-
-## API Endpoints (Internal)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/models` | List available models from configured providers |
-| `POST` | `/api/chat/completions` | Proxy chat request to OpenRouter or NIM |
-| `POST` | `/api/test-model` | Quick test of a model with "Hello world" |
-| `GET` | `/api/settings/status` | Check which API keys are configured |
-
----
-
-## Troubleshooting
-
-### "No API key configured" error
-Go to Settings and add your API key for the provider you're trying to use.
-
-### Models list is empty
-1. Ensure you've added at least one API key in Settings
-2. Click Refresh in the Models tab
-3. Check that your API key is valid at the provider's website
-
-### Chat not responding
-1. Verify the model was selected (check the Chat header)
-2. Check if the API key is still valid
-3. Try the Test button on the model in the Models tab
-
-### App won't start
-1. Ensure Node.js 18+ is installed: `node --version`
-2. Reinstall dependencies: `rm -rf node_modules && npm install`
-3. Rebuild: `npm run build && npm run package`
+| `npm run package` | Build + package as portable exe |
 
 ---
 
@@ -273,6 +280,7 @@ MIT
 - **[Freebuff](https://github.com/CodebuffAI/freebuff)** — Original AI coding agent that inspired this project
 - **[OpenRouter](https://openrouter.ai)** — Unified API for 200+ AI models
 - **[NVIDIA NIM](https://build.nvidia.com)** — Free tier for NVIDIA AI models
-- **[Electron](https://www.electronjs.org)** — Cross-platform desktop framework
-- **[React](https://react.dev)** — UI library
-- **[Tailwind CSS](https://tailwindcss.com)** — Utility-first CSS
+- **[Ollama](https://ollama.com)** — Run AI models locally
+- **[Playwright](https://playwright.dev)** — Browser automation
+- **[Claude Code](https://claude.ai)** — Inspiration for agent skills and architecture
+- **[Aider](https://github.com/paul-gauthier/aider)** — Inspiration for repo map and diff editing
