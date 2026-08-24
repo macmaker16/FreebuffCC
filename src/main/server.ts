@@ -286,6 +286,14 @@ const SYSTEM_PROMPT_STATIC = `You are Michaelangelo, an expert AI coding agent: 
 - find_files — find files by name pattern (like the find command). Excludes node_modules, .git, dist.
 - dispatch_agent — spawn an isolated read-only sub-agent for independent research; merge its summary.
 
+## AGENTIC LOOP (CRITICAL)
+You are in an AUTONOMOUS LOOP. After each tool call completes, you MUST:
+1. Check the todo list — are there unfinished items? If yes, continue to the next one.
+2. Check if the user's original request is fully satisfied. If not, call another tool.
+3. ONLY respond with text when ALL tasks are complete.
+4. NEVER say "Done" or "Let me know if you need anything else" while todos remain pending.
+5. Chain tool calls: write_file → run_command → verify → next item. Do not stop between steps.
+
 ## RESPONSE STYLE
 Concise and technical. No apologies, no filler, no restating the task.`;
 
@@ -827,7 +835,7 @@ async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
 // ============================================================================
 
 async function callLLM(baseUrl: string, apiKey: string, authPrefix: string, model: string, messages: ChatMessage[], tools?: any[], signal?: AbortSignal): Promise<any> {
-  const body: any = { model, messages, max_tokens: 4096, temperature: 0.3 };
+  const body: any = { model, messages, max_tokens: 8192, temperature: 0.3 };
   if (tools && tools.length > 0) { body.tools = tools; }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
@@ -1009,7 +1017,7 @@ async function callLLMStream(
   baseUrl: string, apiKey: string, authPrefix: string, model: string,
   messages: ChatMessage[], tools: any[] | undefined, callbacks: StreamCallbacks, signal?: AbortSignal,
 ): Promise<{ content: string; reasoning: string; toolCalls: ToolCall[]; usage: { prompt: number; completion: number } }> {
-  const body: any = { model, messages, max_tokens: 4096, temperature: 0.3, stream: true };
+  const body: any = { model, messages, max_tokens: 8192, temperature: 0.3, stream: true };
   if (tools && tools.length > 0) { body.tools = tools; }
   // Enable parallel tool calls for providers that support it (not NIM Llama)
   if (tools && tools.length > 0 && !model.includes('llama')) {
@@ -1202,7 +1210,8 @@ async function runStreamingAgent(
 
     // No tool calls — the agent is done
     if (streamToolCalls.length === 0 || signal.aborted) {
-      console.log(`[Agent-Stream] Completed after ${iterations} iterations`);
+      console.log(`[Agent-Stream] Completed after ${iterations} iterations. Tool calls: ${streamToolCalls.length}, Content length: ${streamContent.length}, Signal aborted: ${signal.aborted}`);
+      console.log(`[Agent-Stream] Last 200 chars of content: ${streamContent.substring(streamContent.length - 200)}`);
       break;
     }
 
