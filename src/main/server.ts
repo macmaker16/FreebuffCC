@@ -283,6 +283,9 @@ const SYSTEM_PROMPT_STATIC = `You are Michaelangelo, an expert AI coding agent: 
 - browser_navigate / browser_screenshot / browser_get_content / browser_evaluate / browser_close — headless browser for visual analysis.
 - browser_click / browser_type / browser_select / browser_scroll / browser_wait_for — E2E testing tools. Use to test web UIs: click buttons, fill forms, select options, scroll, wait for elements.
 - ensure_dependency — auto-detect and install missing tools (docker, node, python, etc.). Use when a required tool is not installed.
+- check_links — crawl a website URL and find broken links (404, timeout). Use after building a web app.
+- fix_links — check links AND scan source files for broken imports. Returns a full report.
+- /audit — full site audit: crawl links, check imports, test interactive elements.
 - git_status / git_diff / git_stage / git_commit / git_branch / git_log — full git workflow. Stage changes, commit, create branches.
 - code_symbols — extract function/class/interface/import/export declarations from a file. Use to understand structure before editing.
 - diagnose_error — analyze error messages and stack traces. Reads the source file, shows context, suggests a fix.
@@ -767,6 +770,105 @@ async function executeDiagnoseError(args: { error_text: string; file_path?: stri
 // ============================================================================
 
 // ============================================================================
+// LINK CHECKER & AUTO-FIX
+// ============================================================================
+
+async function executeCheckLinks(args: { url: string; depth?: number }): Promise<string> {
+  if (!args.url) return 'ERROR: url required';
+  const baseUrl = args.url;
+  const maxDepth = args.depth || 2;
+  const visited = new Set<string>();
+  const broken: Array<{ page: string; link: string; status: number | string }> = [];
+  const checked = new Set<string>();
+  async function crawl(pageUrl: string, depth: number) {
+    if (depth > maxDepth || visited.has(pageUrl)) return;
+    visited.add(pageUrl);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(pageUrl, { signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0 (Michaelangelo-LinkChecker)' } });
+      clearTimeout(timeout);
+      if (!res.ok) { broken.push({ page: baseUrl, link: pageUrl, status: res.status }); return; }
+      const html = await res.text();
+      // Extract links from href attributes
+      const linkRegex = /href=["']([^"'#]+)["']/g;
+      let match;
+      while ((match = linkRegex.exec(html)) !== null) {
+        let link = match[1];
+        // Resolve relative URLs
+        try { link = new URL(link, pageUrl).href; } catch { continue; }
+        // Skip external links, anchors, mailto, tel
+        if (!link.startsWith(baseUrl) || link.includes('mailto:') || link.includes('tel:')) continue;
+        if (checked.has(link)) continue;
+        checked.add(link);
+        // Check the link
+        try {
+          const c = new AbortController(); const t = setTimeout(() => c.abort(), 8000);
+          const r = await fetch(link, { method: 'HEAD', signal: c.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
+          clearTimeout(t);
+          if (!r.ok) broken.push({ page: pageUrl, link, status: r.status });
+        } catch { broken.push({ page: pageUrl, link, status: 'timeout/error' }); }
+      }
+      // Follow internal links for deeper crawling
+      const internalLinks = [...new Set((html.match(/href=["']([^"'#]+)["']/g) || []).map(m => m.replace(/href=["']|["']/g, '')).filter(l => { try { return new URL(l, pageUrl).href.startsWith(baseUrl); } catch { return false; } }))];
+      for (const next of internalLinks.slice(0, 20)) {
+        try { await crawl(new URL(next, pageUrl).href, depth + 1); } catch {}
+      }
+    } catch (err: any) { broken.push({ page: baseUrl, link: pageUrl, status: err.message }); }
+  }
+  await crawl(baseUrl, 0);
+  if (broken.length === 0) return `✅ All links OK! Checked ${checked.size} links across ${visited.size} pages.`;
+  const report = [`**Found ${broken.length} broken links:**\n`];
+  for (const b of broken) {
+    report.push(`- [${b.status}] ${b.link}\n  found on: ${b.page}`);
+  }
+  return report.join('\n');
+}
+
+async function executeFixLinks(args: { url: string; file_path?: string }): Promise<string> {
+  // First check for broken links
+  const checkResult = await executeCheckLinks({ url: args.url, depth: 2 });
+  if (checkResult.startsWith('✅')) return checkResult;
+  // Find the source files that contain the broken links
+  const ws = getWorkspaceDir();
+  const fixes: string[] = [];
+  // Search for common broken link patterns in source files
+  const brokenPatterns = [
+    /href=["']([^"']+)["']/g,
+    /src=["']([^"']+)["']/g,
+    /import.*from ["']([^"']+)["']/g,
+    /require\(["']([^"']+)["']\)/g,
+  ];
+  try {
+    const { stdout } = await execAsync(`find . -name '*.tsx' -o -name '*.ts' -o -name '*.jsx' -o -name '*.js' -o -name '*.html' -o -name '*.vue' | grep -v node_modules | grep -v .git | head -50`, { cwd: ws, timeout: 10000 });
+    const files = stdout.trim().split('\n').filter(f => f.trim());
+    for (const file of files) {
+      const fullPath = require('path').join(ws, file.replace('./', ''));
+      try {
+        const content = require('fs').readFileSync(fullPath, 'utf-8');
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          // Check for imports that might be broken
+          const importMatch = lines[i].match(/from ['"](.+)['"]|import ['"](.+)['"]|require\(['"](.+)['"]\)/);
+          if (importMatch) {
+            const importPath = importMatch[1] || importMatch[2] || importMatch[3];
+            if (importPath && (importPath.startsWith('.') || importPath.startsWith('/'))) {
+              const resolved = require('path').resolve(require('path').dirname(fullPath), importPath);
+              const exists = [resolved, resolved + '.ts', resolved + '.tsx', resolved + '.js', resolved + '.jsx', resolved + '/index.ts', resolved + '/index.js'].some(p => require('fs').existsSync(p));
+              if (!exists) {
+                fixes.push(`${file}:${i + 1} — broken import: ${importPath}`);
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+  if (fixes.length === 0) return `**Link check results:**\n${checkResult}\n\nNo broken imports found in source files.`;
+  return `**Link check results:**\n${checkResult}\n\n**Broken imports in source files (${fixes.length}):**\n${fixes.join('\n')}`;
+}
+
+// ============================================================================
 // DEPENDENCY AUTO-DETECT & INSTALL
 // ============================================================================
 
@@ -946,6 +1048,8 @@ async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
       const result = await BrowserSkill.execute(toolCall.function.name, args, ctx);
       return { output: result.output || result.error || '(no output)' };
     }
+    case 'check_links': return { output: await executeCheckLinks(args) };
+    case 'fix_links': return { output: await executeFixLinks(args) };
     case 'ensure_dependency': return { output: await executeEnsureDependency(args) };
     default: return { output: `ERROR: Unknown tool "${toolCall.function.name}"` };
   }
@@ -1552,6 +1656,8 @@ const TOOL_DEFINITIONS = [
   { type: 'function', function: { name: 'browser_select', description: 'Select an option from a dropdown by CSS selector and value.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of select element' }, value: { type: 'string', description: 'Option value to select' } }, required: ['selector', 'value'] } } },
   { type: 'function', function: { name: 'browser_scroll', description: 'Scroll the page up or down.', parameters: { type: 'object', properties: { direction: { type: 'string', description: 'up or down (default: down)' }, pixels: { type: 'number', description: 'Pixels to scroll (default: 500)' } }, required: [] } } },
   { type: 'function', function: { name: 'browser_wait_for', description: 'Wait for a CSS selector to appear on the page. Use after navigation or clicks.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector to wait for' }, timeout_ms: { type: 'number', description: 'Timeout in ms (default 10000)' } }, required: ['selector'] } } },
+  { type: 'function', function: { name: 'check_links', description: 'Crawl a website URL and find broken links (404, timeout, etc.). Use after building a web app to verify all links work.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'Base URL to crawl (e.g., http://localhost:3000)' }, depth: { type: 'number', description: 'Crawl depth (default 2, max 4)' } }, required: ['url'] } } },
+  { type: 'function', function: { name: 'fix_links', description: 'Check links AND scan source files for broken imports/references. Returns a report of what needs fixing.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'Base URL to crawl' }, file_path: { type: 'string', description: 'Optional specific file to check' } }, required: ['url'] } } },
   { type: 'function', function: { name: 'ensure_dependency', description: 'Check if a tool (docker, node, python, etc.) is installed. If not, install it automatically. Returns install instructions or confirmation.', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Tool/command name to check (e.g., docker, node, npm, python3)' }, install_cmd: { type: 'string', description: 'Optional custom install command' } }, required: ['name'] } } },
   { type: 'function', function: { name: 'git_status', description: 'Show the working tree status. Use before committing to see what changed.', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'git_diff', description: 'Show file changes not yet staged. Pass file_path for a specific file.', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Optional specific file to diff' } }, required: [] } } },

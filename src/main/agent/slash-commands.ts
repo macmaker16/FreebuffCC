@@ -87,6 +87,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/format', description: 'Auto-format all files with prettier/black', usage: '/format [file]', category: 'agent' },
   { name: '/persona', description: 'Set custom system prompt for the agent', usage: '/persona <prompt>', category: 'project' },
   { name: '/coderabbit', description: 'Run CodeRabbit AI code review on current changes', usage: '/coderabbit [file-or-dir]', category: 'agent' },
+  { name: '/audit', description: 'Full site audit: crawl links, check imports, find issues', usage: '/audit <url>', category: 'agent' },
 
   // Info
   { name: '/help', description: 'Show all available commands', usage: '/help', category: 'info' },
@@ -158,6 +159,7 @@ export class SlashCommandHandler {
       case '/format': return this.cmdFormat(args);
       case '/persona': return this.cmdPersona(args);
       case '/coderabbit': return this.cmdCoderabbit(args);
+      case '/audit': return this.cmdAudit(args);
       default:
         return {
           response: `Unknown command: ${command}\nType /help to see available commands.`,
@@ -730,6 +732,18 @@ export class SlashCommandHandler {
     } catch (err: any) {
       return { response: `**CodeRabbit error:** ${err.message}`, meta: true };
     }
+  }
+
+  // ==========================================================================
+  // /audit — Full site audit
+  // ==========================================================================
+
+  private async cmdAudit(url: string): Promise<SlashCommandResult> {
+    if (!url) return { response: 'Usage: /audit <url>\nExample: /audit http://localhost:3000', meta: true };
+    return {
+      response: `[AUDIT MODE] Perform a full site audit on ${url}:\n1. Crawl all pages and find broken links (use check_links)\n2. Scan source files for broken imports (use fix_links)\n3. Check for accessibility issues\n4. Test all interactive elements\n5. Generate a full report with fixes`,
+      meta: false,
+    };
   }
 }
 
