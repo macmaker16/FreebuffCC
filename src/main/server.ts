@@ -28,6 +28,7 @@ import { OutputInterceptor } from './agent/output-interceptor';
 import { ContextCompressionEngine } from './agent/context-compression';
 import { getRepoMapGenerator } from './agent/repo-map';
 import { exec } from 'child_process';
+import { getPluginRegistry } from './agent/plugins/registry';
 import { readFile, writeFile, mkdir, access } from 'fs/promises';
 import { dirname, resolve, isAbsolute, join } from 'path';
 import { promisify } from 'util';
@@ -2444,16 +2445,27 @@ export async function startExpressApp(): Promise<express.Express> {
   // ==========================================================================
   // Plugin Marketplace API
   // ==========================================================================
-  const { getPluginRegistry } = require('./agent/plugins/registry');
-  const pluginRegistry = getPluginRegistry();
+  let pluginRegistry: any;
+  try {
+    pluginRegistry = getPluginRegistry();
+    console.log('[Plugins] Marketplace registry loaded successfully');
+  } catch (e) {
+    console.error('[Plugins] Failed to init registry:', e);
+  }
 
   app.get('/api/plugins', (_req: Request, res: Response) => {
-    const query = _req.query.q as string;
-    const category = _req.query.category as string;
-    let plugins = pluginRegistry.getAll();
-    if (query) plugins = pluginRegistry.search(query);
-    else if (category && category !== 'all') plugins = pluginRegistry.getByCategory(category);
-    res.json({ plugins, stats: pluginRegistry.getStats() });
+    if (!pluginRegistry) return res.json({ plugins: [], stats: { total: 0, installed: 0, enabled: 0, totalTools: 0 } });
+    try {
+      const query = _req.query.q as string;
+      const category = _req.query.category as string;
+      let plugins = pluginRegistry.getAll();
+      if (query) plugins = pluginRegistry.search(query);
+      else if (category && category !== 'all') plugins = pluginRegistry.getByCategory(category);
+      res.json({ plugins, stats: pluginRegistry.getStats() });
+    } catch (e) {
+      console.error('[Plugins] Error fetching plugins:', e);
+      res.json({ plugins: [], stats: { total: 0, installed: 0, enabled: 0, totalTools: 0 } });
+    }
   });
 
   app.post('/api/plugins/install', (req: Request, res: Response) => {
