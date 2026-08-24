@@ -49,7 +49,7 @@ export default function PermissionDialog({ request, onApprove, onDeny }: Props) 
           </div>
           <div className="flex-1">
             <h3 className="text-sm font-semibold text-white">Permission Required</h3>
-            <p className="text-[11px] text-dark-300">{config.label}</p>
+            <p className="text-[13px] text-dark-300">{config.label}</p>
           </div>
           <button onClick={onDeny} className="p-1 rounded hover:bg-dark-700 transition-colors">
             <X size={14} className="text-dark-400" />
@@ -59,18 +59,18 @@ export default function PermissionDialog({ request, onApprove, onDeny }: Props) 
         {/* Body */}
         <div className="px-4 py-3 space-y-3">
           <div className="bg-dark-800 rounded-md p-3 border border-dark-600">
-            <p className="text-[11px] text-dark-300 mb-1">The agent wants to execute:</p>
+            <p className="text-[13px] text-dark-300 mb-1">The agent wants to execute:</p>
             <p className="text-xs text-white font-mono break-all">{request.description}</p>
           </div>
 
           {request.command && (
             <div className="bg-dark-950 rounded-md p-2 border border-dark-700">
-              <code className="text-[11px] text-yellow-300 font-mono">{request.command}</code>
+              <code className="text-[13px] text-yellow-300 font-mono">{request.command}</code>
             </div>
           )}
 
           {request.filePath && (
-            <p className="text-[11px] text-dark-400">
+            <p className="text-[13px] text-dark-400">
               File: <span className="text-dark-200 font-mono">{request.filePath}</span>
             </p>
           )}

@@ -172,7 +172,7 @@ function App() {
     <div className="flex h-screen bg-dark-950 text-white overflow-hidden">
       {/* Title Bar */}
       <div className="fixed top-0 left-0 right-0 h-7 bg-dark-900 border-b border-dark-700 titlebar-drag z-50 flex items-center justify-center">
-        <span className="text-[11px] font-medium text-dark-200">Michaelangelo</span>
+        <span className="text-[13px] font-medium text-dark-200">Michaelangelo</span>
       </div>
 
       {/* Sidebar */}
@@ -184,7 +184,7 @@ function App() {
             </div>
             <div className="min-w-0">
               <h1 className="font-bold text-xs truncate">Michaelangelo</h1>
-              <p className="text-[10px] text-dark-400">OpenRouter + NIM</p>
+              <p className="text-[12px] text-dark-400">OpenRouter + NIM</p>
             </div>
           </div>
         </div>
@@ -214,23 +214,23 @@ function App() {
         <div className="p-2 border-t border-dark-700 space-y-1">
           <div className="flex items-center gap-1.5">
             <Circle size={7} className={apiReady ? 'fill-green-500 text-green-500' : 'fill-yellow-500 text-yellow-500'} />
-            <span className="text-[10px] text-dark-300">
+            <span className="text-[12px] text-dark-300">
               {apiReady ? 'Proxy Ready' : 'Init...'}
             </span>
           </div>
           {autoTestRunning && (
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 border border-brand-400 border-t-transparent rounded-full animate-spin" />
-              <span className="text-[10px] text-dark-400">Testing models...</span>
+              <span className="text-[12px] text-dark-400">Testing models...</span>
             </div>
           )}
           {!autoTestRunning && models.length > 0 && (
-            <p className="text-[10px] text-dark-500">
+            <p className="text-[12px] text-dark-500">
               {onlineCount}/{models.length} online
             </p>
           )}
           {activeModel && (
-            <p className="text-[10px] text-dark-400 truncate" title={activeModel.name}>
+            <p className="text-[12px] text-dark-400 truncate" title={activeModel.name}>
               → {activeModel.name}
             </p>
           )}
@@ -238,7 +238,7 @@ function App() {
           {updateStatus?.status === 'available' && (
             <button
               onClick={() => window.electronAPI.checkForUpdates()}
-              className="flex items-center gap-1.5 text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+              className="flex items-center gap-1.5 text-[12px] text-blue-400 hover:text-blue-300 cursor-pointer"
             >
               <Download size={10} />
               <span>v{updateStatus.version} available</span>
@@ -247,7 +247,7 @@ function App() {
           {updateStatus?.status === 'downloading' && (
             <div className="flex items-center gap-1.5">
               <RefreshCw size={10} className="animate-spin text-blue-400" />
-              <span className="text-[10px] text-blue-400">Downloading {Math.round(updateStatus.percent || 0)}%</span>
+              <span className="text-[12px] text-blue-400">Downloading {Math.round(updateStatus.percent || 0)}%</span>
               <div className="flex-1 h-1 bg-dark-700 rounded-full overflow-hidden">
                 <div className="h-full bg-blue-500 rounded-full transition-all duration-300" style={{ width: `${updateStatus.percent || 0}%` }} />
               </div>
@@ -256,24 +256,24 @@ function App() {
           {updateStatus?.status === 'ready' && (
             <button
               onClick={() => window.electronAPI.installUpdate()}
-              className="flex items-center gap-1.5 text-[10px] text-green-400 hover:text-green-300 cursor-pointer"
+              className="flex items-center gap-1.5 text-[12px] text-green-400 hover:text-green-300 cursor-pointer"
             >
               <Check size={10} />
               <span>Restart to update</span>
             </button>
           )}
           {updateStatus?.status === 'up-to-date' && (
-            <p className="text-[10px] text-dark-500">Up to date</p>
+            <p className="text-[12px] text-dark-500">Up to date</p>
           )}
           {/* Theme Toggle */}
           <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-            className="flex items-center gap-1.5 text-[10px] text-dark-500 hover:text-white transition-colors mt-1">
+            className="flex items-center gap-1.5 text-[12px] text-dark-500 hover:text-white transition-colors mt-1">
             {theme === 'dark' ? <Sun size={10} /> : <Moon size={10} />}
             <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
           </button>
           {/* Keyboard Shortcuts */}
           <button onClick={() => setShowShortcuts(s => !s)}
-            className="flex items-center gap-1.5 text-[10px] text-dark-600 hover:text-white transition-colors">
+            className="flex items-center gap-1.5 text-[12px] text-dark-600 hover:text-white transition-colors">
             <Keyboard size={10} />
             <span>Shortcuts (?)</span>
           </button>
@@ -283,7 +283,7 @@ function App() {
           <div className="absolute inset-0 z-50 bg-black/50 flex items-center justify-center" onClick={() => setShowShortcuts(false)}>
             <div className="bg-dark-800 rounded-xl border border-dark-600 p-4 w-72 shadow-2xl" onClick={e => e.stopPropagation()}>
               <h3 className="text-xs font-bold text-white mb-3">Keyboard Shortcuts</h3>
-              <div className="space-y-1.5 text-[10px]">
+              <div className="space-y-1.5 text-[12px]">
                 {[
                   ['Ctrl+K', 'Chat view'], ['Ctrl+M', 'Models view'], ['Ctrl+D', 'Dashboard'], ['Ctrl+,', 'Settings'],
                   ['Ctrl+Shift+T', 'Toggle theme'], ['Esc', 'Stop agent'], ['?', 'This dialog'],
@@ -291,7 +291,7 @@ function App() {
                   <div key={key} className="flex justify-between"><span className="text-dark-300">{desc}</span><kbd className="bg-dark-700 px-1.5 py-0.5 rounded text-dark-400 font-mono">{key}</kbd></div>
                 ))}
               </div>
-              <button onClick={() => setShowShortcuts(false)} className="mt-3 w-full py-1 bg-dark-700 hover:bg-dark-600 rounded text-[10px] text-dark-300">Close</button>
+              <button onClick={() => setShowShortcuts(false)} className="mt-3 w-full py-1 bg-dark-700 hover:bg-dark-600 rounded text-[12px] text-dark-300">Close</button>
             </div>
           </div>
         )}

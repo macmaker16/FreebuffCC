@@ -92,9 +92,9 @@ export default function SkillsView() {
         <div className="flex items-center gap-2 mb-2">
           <Wrench size={16} className="text-brand-400" />
           <h2 className="text-sm font-bold">Skills</h2>
-          <span className="text-[10px] text-dark-500">{skills.length} available</span>
+          <span className="text-[12px] text-dark-500">{skills.length} available</span>
         </div>
-        <p className="text-[10px] text-dark-400 mb-2">
+        <p className="text-[12px] text-dark-400 mb-2">
           Reusable workflows that chain multiple tools together. Type the trigger command in chat to run.
         </p>
         <div className="relative">
@@ -104,7 +104,7 @@ export default function SkillsView() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search skills..."
-            className="w-full pl-7 pr-3 py-1.5 bg-dark-800 border border-dark-700 rounded text-[11px] focus:outline-none focus:border-brand-500"
+            className="w-full pl-7 pr-3 py-1.5 bg-dark-800 border border-dark-700 rounded text-[13px] focus:outline-none focus:border-brand-500"
           />
         </div>
       </div>
@@ -119,13 +119,13 @@ export default function SkillsView() {
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-base">{skill.icon || '⚡'}</span>
                   <h3 className="text-xs font-semibold text-white">{skill.name}</h3>
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded ${CATEGORY_COLORS[skill.category] || 'bg-dark-700 text-dark-400'}`}>
+                  <span className={`text-[10.5px] px-1.5 py-0.5 rounded ${CATEGORY_COLORS[skill.category] || 'bg-dark-700 text-dark-400'}`}>
                     {skill.category}
                   </span>
                 </div>
-                <p className="text-[10px] text-dark-400 mb-2">{skill.description}</p>
+                <p className="text-[12px] text-dark-400 mb-2">{skill.description}</p>
                 <div className="flex items-center gap-2">
-                  <code className="text-[10px] text-brand-400 bg-dark-800 px-1.5 py-0.5 rounded font-mono">
+                  <code className="text-[12px] text-brand-400 bg-dark-800 px-1.5 py-0.5 rounded font-mono">
                     {skill.trigger}
                   </code>
                   <ChevronRight size={10} className="text-dark-600" />
@@ -134,7 +134,7 @@ export default function SkillsView() {
               <button
                 onClick={() => handleRunSkill(skill)}
                 disabled={runningSkill === skill.trigger}
-                className="flex items-center gap-1 px-2.5 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:bg-dark-700 rounded text-[10px] text-white font-medium transition-colors ml-3"
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:bg-dark-700 rounded text-[12px] text-white font-medium transition-colors ml-3"
               >
                 {runningSkill === skill.trigger ? (
                   <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
@@ -150,14 +150,14 @@ export default function SkillsView() {
         {filtered.length === 0 && (
           <div className="text-center py-8 text-dark-500">
             <Wrench size={24} className="mx-auto mb-2 opacity-50" />
-            <p className="text-[11px]">No skills match "{search}"</p>
+            <p className="text-[13px]">No skills match "{search}"</p>
           </div>
         )}
       </div>
 
       {/* Create Custom Skill */}
       <div className="px-3 py-2 border-t border-dark-700">
-        <p className="text-[9px] text-dark-500">
+        <p className="text-[10.5px] text-dark-500">
           Create custom skills: place a .json file in <code>.michaelangelo/skills/</code>
         </p>
       </div>

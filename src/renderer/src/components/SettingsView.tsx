@@ -57,7 +57,7 @@ export default function SettingsView({ onSettingsSaved }: Props) {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-base font-bold">Settings</h2>
-          <p className="text-[11px] text-dark-400">Configure API keys and local LLM</p>
+          <p className="text-[13px] text-dark-400">Configure API keys and local LLM</p>
         </div>
         <button onClick={handleSave}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors text-xs">
@@ -67,7 +67,7 @@ export default function SettingsView({ onSettingsSaved }: Props) {
       </div>
 
       <div className="bg-brand-600/10 border border-brand-500/30 rounded-lg p-3 mb-4">
-        <p className="text-[11px] text-brand-300">
+        <p className="text-[13px] text-brand-300">
           Keys stored locally. Never sent anywhere except directly to provider APIs.
         </p>
       </div>
@@ -78,22 +78,22 @@ export default function SettingsView({ onSettingsSaved }: Props) {
           <Monitor size={14} className="text-green-400" />
           <h3 className="text-xs font-semibold">Local LLM (Ollama / llama.cpp / LM Studio)</h3>
         </div>
-        <p className="text-[10px] text-dark-400 mb-2">
+        <p className="text-[12px] text-dark-400 mb-2">
           Connect to any OpenAI-compatible local server. Ollama default: <span className="text-green-400">http://localhost:11434/v1</span>
         </p>
         <div className="space-y-2">
           <div>
-            <label className="text-[10px] text-dark-500 mb-0.5 block">Endpoint URL</label>
+            <label className="text-[12px] text-dark-500 mb-0.5 block">Endpoint URL</label>
             <input
               type="text"
               value={form.localLlmEndpoint || ''}
               onChange={e => handleChange('localLlmEndpoint', e.target.value)}
               placeholder="http://localhost:11434/v1"
-              className="w-full px-3 py-2 bg-dark-800 border border-dark-700 rounded font-mono text-[11px] focus:outline-none focus:border-green-500"
+              className="w-full px-3 py-2 bg-dark-800 border border-dark-700 rounded font-mono text-[13px] focus:outline-none focus:border-green-500"
             />
           </div>
           <div>
-            <label className="text-[10px] text-dark-500 mb-0.5 block">API Key (usually "ollama" or empty)</label>
+            <label className="text-[12px] text-dark-500 mb-0.5 block">API Key (usually "ollama" or empty)</label>
             <div className="relative">
               <Key size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dark-500" />
               <input
@@ -101,7 +101,7 @@ export default function SettingsView({ onSettingsSaved }: Props) {
                 value={form.localLlmApiKey || ''}
                 onChange={e => handleChange('localLlmApiKey', e.target.value)}
                 placeholder="ollama"
-                className="w-full pl-8 pr-8 py-2 bg-dark-800 border border-dark-700 rounded font-mono text-[11px] focus:outline-none focus:border-green-500"
+                className="w-full pl-8 pr-8 py-2 bg-dark-800 border border-dark-700 rounded font-mono text-[13px] focus:outline-none focus:border-green-500"
               />
               <button onClick={() => setShowKeys(prev => ({ ...prev, localLlmApiKey: !prev.localLlmApiKey }))}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-white">
@@ -109,7 +109,7 @@ export default function SettingsView({ onSettingsSaved }: Props) {
               </button>
             </div>
           </div>
-          <div className="flex items-center gap-4 text-[10px] text-dark-500">
+          <div className="flex items-center gap-4 text-[12px] text-dark-500">
             <span>Ollama: <span className="text-dark-300">11434</span></span>
             <span>llama.cpp: <span className="text-dark-300">8080</span></span>
             <span>LM Studio: <span className="text-dark-300">1234</span></span>
@@ -134,9 +134,9 @@ export default function SettingsView({ onSettingsSaved }: Props) {
                   <h3 className="text-xs font-semibold">{p.label}</h3>
                 </div>
                 <a href={`https://${p.url}`} target="_blank" rel="noopener noreferrer"
-                  className="text-[10px] text-brand-400 hover:underline">{p.url}</a>
+                  className="text-[12px] text-brand-400 hover:underline">{p.url}</a>
               </div>
-              <p className="text-[10px] text-dark-400 mb-2">{p.desc}</p>
+              <p className="text-[12px] text-dark-400 mb-2">{p.desc}</p>
               <div className="relative">
                 <Key size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dark-500" />
                 <input
@@ -144,7 +144,7 @@ export default function SettingsView({ onSettingsSaved }: Props) {
                   value={form[p.key] || ''}
                   onChange={e => handleChange(p.key, e.target.value)}
                   placeholder={p.placeholder || `Enter ${p.label} API key...`}
-                  className="w-full pl-8 pr-8 py-2 bg-dark-800 border border-dark-700 rounded font-mono text-[11px] focus:outline-none focus:border-brand-500"
+                  className="w-full pl-8 pr-8 py-2 bg-dark-800 border border-dark-700 rounded font-mono text-[13px] focus:outline-none focus:border-brand-500"
                 />
                 <button onClick={() => setShowKeys(prev => ({ ...prev, [p.key]: !prev[p.key] }))}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-white">
@@ -158,7 +158,7 @@ export default function SettingsView({ onSettingsSaved }: Props) {
 
       {/* Tool Integrations */}
       <div className="space-y-2">
-        <p className="text-[10px] text-dark-500 uppercase tracking-wider font-semibold">Tool Integrations</p>
+        <p className="text-[12px] text-dark-500 uppercase tracking-wider font-semibold">Tool Integrations</p>
         {TOOL_CONFIG.map(p => {
           const hasKey = !!form[p.key];
           return (
@@ -169,14 +169,14 @@ export default function SettingsView({ onSettingsSaved }: Props) {
                   <h3 className="text-xs font-semibold">{p.label}</h3>
                 </div>
                 <a href={`https://${p.url}`} target="_blank" rel="noopener noreferrer"
-                  className="text-[10px] text-brand-400 hover:underline">{p.url}</a>
+                  className="text-[12px] text-brand-400 hover:underline">{p.url}</a>
               </div>
-              <p className="text-[10px] text-dark-400 mb-2">{p.desc}</p>
+              <p className="text-[12px] text-dark-400 mb-2">{p.desc}</p>
               <div className="relative">
                 <Key size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dark-500" />
                 <input type={showKeys[p.key] ? 'text' : 'password'} value={form[p.key] || ''}
                   onChange={e => handleChange(p.key, e.target.value)} placeholder={p.placeholder || `Enter ${p.label} API key...`}
-                  className="w-full pl-8 pr-8 py-2 bg-dark-800 border border-dark-700 rounded font-mono text-[11px] focus:outline-none focus:border-brand-500" />
+                  className="w-full pl-8 pr-8 py-2 bg-dark-800 border border-dark-700 rounded font-mono text-[13px] focus:outline-none focus:border-brand-500" />
                 <button onClick={() => setShowKeys(prev => ({ ...prev, [p.key]: !prev[p.key] }))}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-white">
                   {showKeys[p.key] ? <EyeOff size={12} /> : <Eye size={12} />}

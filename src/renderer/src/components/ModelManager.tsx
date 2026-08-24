@@ -106,18 +106,18 @@ export default function ModelManager({
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-bold">Models</h2>
-          <span className="text-[10px] text-dark-500 bg-dark-800 px-1.5 py-0.5 rounded">
+          <span className="text-[12px] text-dark-500 bg-dark-800 px-1.5 py-0.5 rounded">
             {onlineCount}/{tabCount} online
           </span>
           {autoTestRunning && (
             <div className="flex items-center gap-1">
               <Loader2 size={10} className="animate-spin text-brand-400" />
-              <span className="text-[10px] text-brand-400">Testing...</span>
+              <span className="text-[12px] text-brand-400">Testing...</span>
             </div>
           )}
         </div>
         <button onClick={handleRefresh} disabled={!apiReady || loading}
-          className="flex items-center gap-1 px-2 py-1 bg-dark-800 hover:bg-dark-700 disabled:opacity-50 rounded text-[10px] transition-colors">
+          className="flex items-center gap-1 px-2 py-1 bg-dark-800 hover:bg-dark-700 disabled:opacity-50 rounded text-[12px] transition-colors">
           <RefreshCw size={10} className={loading ? 'animate-spin' : ''} />
           Refresh
         </button>
@@ -127,7 +127,7 @@ export default function ModelManager({
       <div className="flex gap-0.5 mb-2 overflow-x-auto pb-1 flex-shrink-0">
         <button
           onClick={() => setActiveTab(null)}
-          className={`px-2 py-1 rounded text-[10px] font-medium whitespace-nowrap transition-colors ${
+          className={`px-2 py-1 rounded text-[12px] font-medium whitespace-nowrap transition-colors ${
             !activeTab ? 'bg-brand-600 text-white' : 'bg-dark-800 text-dark-400 hover:bg-dark-700'
           }`}
         >
@@ -138,7 +138,7 @@ export default function ModelManager({
           const count = models.filter(m => m.provider === p).length;
           return (
             <button key={p} onClick={() => setActiveTab(p)}
-              className={`px-2 py-1 rounded text-[10px] font-medium whitespace-nowrap transition-colors ${
+              className={`px-2 py-1 rounded text-[12px] font-medium whitespace-nowrap transition-colors ${
                 activeTab === p ? 'bg-brand-600 text-white' : 'bg-dark-800 text-dark-400 hover:bg-dark-700'
               }`}
             >
@@ -166,7 +166,7 @@ export default function ModelManager({
           <div className="flex flex-col items-center justify-center h-full text-dark-500">
             <Cpu size={32} className="mb-2 opacity-50" />
             <p className="text-xs">No models loaded</p>
-            <p className="text-[10px]">Add API keys in Settings, then Refresh</p>
+            <p className="text-[12px]">Add API keys in Settings, then Refresh</p>
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-dark-500">
@@ -197,11 +197,11 @@ export default function ModelManager({
                   {/* Model info */}
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate">{model.name}</p>
-                    <p className="text-[9px] text-dark-500 truncate">{model.id}</p>
+                    <p className="text-[10.5px] text-dark-500 truncate">{model.id}</p>
                   </div>
 
                   {/* Provider badge */}
-                  <span className="text-[9px] text-dark-600 bg-dark-800 px-1 py-0.5 rounded flex-shrink-0">
+                  <span className="text-[10.5px] text-dark-600 bg-dark-800 px-1 py-0.5 rounded flex-shrink-0">
                     {PROVIDER_TABS[model.provider]?.label || model.provider}
                   </span>
 

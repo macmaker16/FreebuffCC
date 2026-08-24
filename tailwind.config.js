@@ -4,6 +4,13 @@ module.exports = {
   darkMode: 'class',
   theme: {
     extend: {
+      fontSize: {
+        // Bump all standard Tailwind text sizes up slightly
+        'xs': ['13px', { lineHeight: '18px' }],
+        'sm': ['14px', { lineHeight: '20px' }],
+        'base': ['15px', { lineHeight: '22px' }],
+        'lg': ['16px', { lineHeight: '24px' }],
+      },
       colors: {
         brand: {
           50: '#eef9ff', 100: '#d8f1ff', 200: '#b9e8ff', 300: '#89dbff',

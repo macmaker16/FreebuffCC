@@ -90,9 +90,9 @@ export default function TerminalPanel({ toolEvents, iteration, maxIterations, is
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-dark-700 bg-dark-900/50 flex-shrink-0">
         <div className="flex items-center gap-2">
           <Terminal size={12} className="text-dark-400" />
-          <span className="text-[11px] font-medium text-dark-200">Tool Activity</span>
+          <span className="text-[13px] font-medium text-dark-200">Tool Activity</span>
           {isRunning && (
-            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-brand-600/10 text-brand-400 text-[9px]">
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-brand-600/10 text-brand-400 text-[10.5px]">
               <div className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-pulse" />
               {iteration}/{maxIterations}
             </span>
@@ -101,7 +101,7 @@ export default function TerminalPanel({ toolEvents, iteration, maxIterations, is
         <div className="flex items-center gap-1">
           <button
             onClick={() => setShowAll(!showAll)}
-            className={`px-1.5 py-0.5 rounded text-[9px] transition-colors ${showAll ? 'bg-dark-700 text-dark-300' : 'text-dark-500 hover:text-dark-300'}`}
+            className={`px-1.5 py-0.5 rounded text-[10.5px] transition-colors ${showAll ? 'bg-dark-700 text-dark-300' : 'text-dark-500 hover:text-dark-300'}`}
           >
             All
           </button>
@@ -118,7 +118,7 @@ export default function TerminalPanel({ toolEvents, iteration, maxIterations, is
       {/* Tool Events */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-1.5 space-y-0.5" onScroll={handleScroll}>
         {filteredEvents.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-dark-500 text-[10px]">
+          <div className="flex flex-col items-center justify-center h-full text-dark-500 text-[12px]">
             <Terminal size={20} className="opacity-20 mb-1" />
             <p>Tool activity will appear here</p>
           </div>
@@ -146,12 +146,12 @@ export default function TerminalPanel({ toolEvents, iteration, maxIterations, is
 
                 <Icon size={10} className="text-dark-400 flex-shrink-0" />
 
-                <span className="text-[10px] text-dark-300 truncate flex-1 font-mono">
+                <span className="text-[12px] text-dark-300 truncate flex-1 font-mono">
                   {summary}
                 </span>
 
                 {event.duration && (
-                  <span className="text-[9px] text-dark-500 flex-shrink-0">{event.duration}ms</span>
+                  <span className="text-[10.5px] text-dark-500 flex-shrink-0">{event.duration}ms</span>
                 )}
 
                 {event.output && (
@@ -163,7 +163,7 @@ export default function TerminalPanel({ toolEvents, iteration, maxIterations, is
               {/* Expanded output */}
               {isExpanded && event.output && (
                 <div className="px-2 pb-1.5 border-t border-dark-700/30">
-                  <pre className="text-[10px] text-dark-300 whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-dark-950 rounded p-1.5 mt-1 font-mono">
+                  <pre className="text-[12px] text-dark-300 whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-dark-950 rounded p-1.5 mt-1 font-mono">
                     {event.output}
                   </pre>
                 </div>

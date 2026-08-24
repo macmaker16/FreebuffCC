@@ -53,7 +53,7 @@ export default function DiffViewer({ diff, compact = false }: Props) {
   };
 
   return (
-    <div className="rounded-md border border-dark-600 overflow-hidden text-[11px] font-mono">
+    <div className="rounded-md border border-dark-600 overflow-hidden text-[13px] font-mono">
       {/* Header */}
       <div
         className="flex items-center justify-between px-3 py-1.5 bg-dark-800/50 cursor-pointer select-none"
@@ -80,7 +80,7 @@ export default function DiffViewer({ diff, compact = false }: Props) {
           {diff.hunks.map((hunk, hi) => (
             <div key={hi}>
               {/* Hunk header */}
-              <div className="px-3 py-1 bg-dark-800/30 text-dark-400 text-[10px] border-t border-dark-700">
+              <div className="px-3 py-1 bg-dark-800/30 text-dark-400 text-[12px] border-t border-dark-700">
                 @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
               </div>
               {/* Changes */}
@@ -90,10 +90,10 @@ export default function DiffViewer({ diff, compact = false }: Props) {
                   className={`flex ${change.type === 'added' ? 'bg-green-900/15 text-green-300' : change.type === 'removed' ? 'bg-red-900/15 text-red-300' : 'text-dark-300'}`}
                 >
                   {/* Line numbers */}
-                  <span className="w-12 text-right pr-2 text-dark-500 select-none flex-shrink-0 text-[10px]">
+                  <span className="w-12 text-right pr-2 text-dark-500 select-none flex-shrink-0 text-[12px]">
                     {change.oldLineNumber ?? ''}
                   </span>
-                  <span className="w-12 text-right pr-2 text-dark-500 select-none flex-shrink-0 text-[10px]">
+                  <span className="w-12 text-right pr-2 text-dark-500 select-none flex-shrink-0 text-[12px]">
                     {change.newLineNumber ?? ''}
                   </span>
                   {/* Prefix */}

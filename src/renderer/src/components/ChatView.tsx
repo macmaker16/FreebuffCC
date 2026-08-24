@@ -49,32 +49,32 @@ function PermissionCard({ msg, onApprove, onUpdateMessages }: {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <AlertCircle size={12} className="text-orange-400" />
-            <span className="text-[11px] font-medium text-orange-300">Permission Required</span>
+            <span className="text-[13px] font-medium text-orange-300">Permission Required</span>
           </div>
           <div className="relative">
             <button onClick={() => setOpen(!open)}
-              className="px-2 py-0.5 bg-dark-700 hover:bg-dark-600 rounded text-[10px] text-dark-200 font-medium transition-colors flex items-center gap-1">
+              className="px-2 py-0.5 bg-dark-700 hover:bg-dark-600 rounded text-[12px] text-dark-200 font-medium transition-colors flex items-center gap-1">
               Choose <ChevronDown size={10} />
             </button>
             {open && (
               <div className="absolute right-0 top-full mt-1 z-50 bg-dark-800 border border-dark-600 rounded-lg shadow-xl min-w-[160px] overflow-hidden">
                 <button onClick={() => { setOpen(false); handle('approve'); }}
-                  className="w-full px-3 py-1.5 text-left text-[10px] text-dark-200 hover:bg-dark-700 flex items-center gap-2 transition-colors">
+                  className="w-full px-3 py-1.5 text-left text-[12px] text-dark-200 hover:bg-dark-700 flex items-center gap-2 transition-colors">
                   <Check size={10} className="text-brand-400" /> Allow (this time)
                 </button>
                 <button onClick={() => { setOpen(false); handle('approve', true); }}
-                  className="w-full px-3 py-1.5 text-left text-[10px] text-dark-200 hover:bg-dark-700 flex items-center gap-2 transition-colors border-t border-dark-600">
+                  className="w-full px-3 py-1.5 text-left text-[12px] text-dark-200 hover:bg-dark-700 flex items-center gap-2 transition-colors border-t border-dark-600">
                   <CheckCircle2 size={10} className="text-green-400" /> Full Access (skip all)
                 </button>
                 <button onClick={() => { setOpen(false); handle('deny'); }}
-                  className="w-full px-3 py-1.5 text-left text-[10px] text-red-400 hover:bg-dark-700 flex items-center gap-2 transition-colors border-t border-dark-600">
+                  className="w-full px-3 py-1.5 text-left text-[12px] text-red-400 hover:bg-dark-700 flex items-center gap-2 transition-colors border-t border-dark-600">
                   <X size={10} /> Deny
                 </button>
               </div>
             )}
           </div>
         </div>
-        <p className="text-[10px] text-dark-400 mt-1">{req.description}</p>
+        <p className="text-[12px] text-dark-400 mt-1">{req.description}</p>
       </div>
     </div>
   );
@@ -87,7 +87,7 @@ function ThinkingBlock({ thinking }: { thinking: string }) {
     <div className="mb-2">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1.5 text-[10px] text-purple-400 hover:text-purple-300 transition-colors"
+        className="flex items-center gap-1.5 text-[12px] text-purple-400 hover:text-purple-300 transition-colors"
       >
         <Brain size={10} className={expanded ? 'text-purple-400' : 'text-purple-500'} />
         <span className="font-medium">{expanded ? 'Thinking' : 'Thinking...'}</span>
@@ -95,12 +95,12 @@ function ThinkingBlock({ thinking }: { thinking: string }) {
         <span className="text-dark-600">{expanded ? '▼' : '▶'}</span>
       </button>
       {expanded && (
-        <div className="mt-1 p-2 rounded bg-purple-900/20 border border-purple-800/30 text-[10px] text-dark-300 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
+        <div className="mt-1 p-2 rounded bg-purple-900/20 border border-purple-800/30 text-[12px] text-dark-300 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
           {thinking}
         </div>
       )}
       {!expanded && thinking.length > 120 && (
-        <p className="text-[10px] text-dark-500 mt-0.5 pl-4">{preview}</p>
+        <p className="text-[12px] text-dark-500 mt-0.5 pl-4">{preview}</p>
       )}
     </div>
   );
@@ -603,15 +603,15 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             <div className="relative">
               <Search size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-dark-500" />
               <input type="text" placeholder="Search..." value={sessionSearch} onChange={e => setSessionSearch(e.target.value)}
-                className="w-full pl-6 pr-2 py-1 bg-dark-800 border border-dark-700 rounded text-[10px] text-white focus:outline-none focus:border-brand-500" />
+                className="w-full pl-6 pr-2 py-1 bg-dark-800 border border-dark-700 rounded text-[12px] text-white focus:outline-none focus:border-brand-500" />
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
             {sessions.length === 0 ? (
-              <p className="text-[10px] text-dark-500 text-center mt-4">No sessions yet</p>
+              <p className="text-[12px] text-dark-500 text-center mt-4">No sessions yet</p>
             ) : sessions.map(s => (
               <button key={s.id} onClick={() => loadSession(s.id)}
-                className={`w-full text-left p-2 rounded text-[10px] transition-colors ${activeConversationId === s.id ? 'bg-brand-600/20 border border-brand-500/40' : 'hover:bg-dark-800 border border-transparent'}`}>
+                className={`w-full text-left p-2 rounded text-[12px] transition-colors ${activeConversationId === s.id ? 'bg-brand-600/20 border border-brand-500/40' : 'hover:bg-dark-800 border border-transparent'}`}>
                 <p className="font-medium truncate">{s.title}</p>
                 <p className="text-dark-500 truncate">
                   {new Date(s.updatedAt).toLocaleDateString()} · {s.messageCount} msgs · {s.toolCallCount} tools
@@ -634,7 +634,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
               <X size={12} />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-3 text-[10px] space-y-2">
+          <div className="flex-1 overflow-y-auto p-3 text-[12px] space-y-2">
             {projectInfo ? (
               <>
                 <InfoRow label="Type" value={`${projectInfo.type} (${projectInfo.framework})`} />
@@ -680,14 +680,14 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                 <>
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isOnline ? 'bg-green-500' : 'bg-red-500'}`} />
                   <span className="text-xs font-medium truncate">{activeModel.name}</span>
-                  <span className="text-[10px] text-dark-500">{activeModel.provider}</span>
+                  <span className="text-[12px] text-dark-500">{activeModel.provider}</span>
                 </>
               ) : (
                 <span className="text-xs text-yellow-500">No model — Models tab</span>
               )}
             </div>
             {tokenInfo && (
-              <div className="flex items-center gap-2 text-[10px] text-dark-500">
+              <div className="flex items-center gap-2 text-[12px] text-dark-500">
                 <span>{tokenInfo.tokens.toLocaleString()} tokens</span>
                 <span>${tokenInfo.cost.toFixed(4)}</span>
               </div>
@@ -709,9 +709,9 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             </button>
             <div className="flex items-center gap-1 ml-1">
               <Folder size={10} className="text-purple-400" />
-              <span className="text-[10px] text-dark-500 max-w-[100px] truncate" title={workspace}>{workspace || 'No folder'}</span>
+              <span className="text-[12px] text-dark-500 max-w-[100px] truncate" title={workspace}>{workspace || 'No folder'}</span>
               <button onClick={handleSelectFolder}
-                className="text-[10px] px-1 py-0.5 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded transition-colors">
+                className="text-[12px] px-1 py-0.5 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded transition-colors">
                 {workspaceSaved ? <Check size={8} className="text-green-400" /> : <FolderOpen size={8} />}
               </button>
             </div>
@@ -724,7 +724,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
 
         {/* Fallback notification */}
         {fallbackMsg && (
-          <div className="px-4 py-1.5 bg-yellow-500/10 border-b border-yellow-500/30 text-yellow-400 text-[11px] flex items-center gap-1.5">
+          <div className="px-4 py-1.5 bg-yellow-500/10 border-b border-yellow-500/30 text-yellow-400 text-[13px] flex items-center gap-1.5">
             <WifiOff size={12} />
             {fallbackMsg}
           </div>
@@ -736,21 +736,21 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             <div className="flex items-center gap-2">
               <AlertCircle size={14} className="text-orange-400" />
               <div>
-                <p className="text-[11px] font-medium text-orange-300">Permission Required</p>
-                <p className="text-[10px] text-dark-400">{pendingPermission.description}</p>
+                <p className="text-[13px] font-medium text-orange-300">Permission Required</p>
+                <p className="text-[12px] text-dark-400">{pendingPermission.description}</p>
               </div>
             </div>
             <div className="flex items-center gap-1.5">
               <button onClick={() => handlePermission('approve', true)}
-                className="px-2 py-1 bg-green-600 hover:bg-green-700 rounded text-[10px] text-white font-medium transition-colors">
+                className="px-2 py-1 bg-green-600 hover:bg-green-700 rounded text-[12px] text-white font-medium transition-colors">
                 Always Allow
               </button>
               <button onClick={() => handlePermission('approve')}
-                className="px-2 py-1 bg-brand-600 hover:bg-brand-700 rounded text-[10px] text-white font-medium transition-colors">
+                className="px-2 py-1 bg-brand-600 hover:bg-brand-700 rounded text-[12px] text-white font-medium transition-colors">
                 Allow
               </button>
               <button onClick={() => handlePermission('deny')}
-                className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-[10px] text-white font-medium transition-colors">
+                className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-[12px] text-white font-medium transition-colors">
                 Deny
               </button>
             </div>
@@ -762,12 +762,12 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
           <div className="px-4 py-2 border-b border-dark-700 bg-dark-900/60">
             <div className="flex items-center gap-1.5 mb-1">
               <ListTodo size={11} className="text-brand-400" />
-              <span className="text-[10px] font-bold text-dark-300">Tasks</span>
-              <span className="text-[9px] text-dark-500">{todos.filter(t => t.status === 'completed').length}/{todos.length}</span>
+              <span className="text-[12px] font-bold text-dark-300">Tasks</span>
+              <span className="text-[10.5px] text-dark-500">{todos.filter(t => t.status === 'completed').length}/{todos.length}</span>
             </div>
             <div className="space-y-0.5">
               {todos.map((t, i) => (
-                <div key={i} className="flex items-center gap-1.5 text-[10px]">
+                <div key={i} className="flex items-center gap-1.5 text-[12px]">
                   {t.status === 'completed' ? (
                     <CheckCircle2 size={10} className="text-green-400 flex-shrink-0" />
                   ) : t.status === 'in_progress' ? (
@@ -790,7 +790,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
           <div className="px-4 py-1.5 bg-dark-800/50 border-b border-dark-700 flex items-center gap-3 overflow-x-auto">
             <Terminal size={10} className="text-dark-400 flex-shrink-0" />
             {toolActivity.map((ta, i) => (
-              <span key={i} className={`text-[9px] whitespace-nowrap ${ta.status === 'completed' ? 'text-green-400' : ta.status === 'error' ? 'text-red-400' : 'text-dark-400'}`}>
+              <span key={i} className={`text-[10.5px] whitespace-nowrap ${ta.status === 'completed' ? 'text-green-400' : ta.status === 'error' ? 'text-red-400' : 'text-dark-400'}`}>
                 {ta.name}
               </span>
             ))}
@@ -803,12 +803,12 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             <div className="flex flex-col items-center justify-center h-full text-dark-500">
               <Bot size={40} className="mb-2 opacity-30" />
               <p className="text-xs font-medium">Michaelangelo</p>
-              <p className="text-[10px] mt-1">
+              <p className="text-[12px] mt-1">
                 {activeModel ? `Using ${activeModel.name}` : 'Select a model in Models tab'}
               </p>
               <div className="mt-4 text-center space-y-1">
-                <p className="text-[10px] text-dark-600">Type `/help` for available commands</p>
-                <p className="text-[10px] text-dark-600">Or just describe what you want to build</p>
+                <p className="text-[12px] text-dark-600">Type `/help` for available commands</p>
+                <p className="text-[12px] text-dark-600">Or just describe what you want to build</p>
               </div>
             </div>
           ) : (
@@ -850,17 +850,17 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                     <Bot size={11} className="text-brand-400 animate-pulse" />
                   </div>
                   <div className="rounded-lg px-3 py-2 bg-dark-800">
-                    <p className="text-[10px] text-dark-400 mb-1 flex items-center gap-1">
+                    <p className="text-[12px] text-dark-400 mb-1 flex items-center gap-1">
                       <Zap size={10} className="text-brand-400 animate-pulse" />
                       Agent working... <span className="text-dark-600">(Esc to stop)</span>
                     </p>
                     {streamingThinking && (
                       <div className="mb-1.5">
-                        <div className="flex items-center gap-1.5 text-[10px] text-purple-400 mb-1">
+                        <div className="flex items-center gap-1.5 text-[12px] text-purple-400 mb-1">
                           <Brain size={10} className="animate-pulse" />
                           <span className="font-medium">Thinking...</span>
                         </div>
-                        <div className="p-1.5 rounded bg-purple-900/20 border border-purple-800/30 text-[10px] text-dark-300 whitespace-pre-wrap max-h-24 overflow-y-auto leading-relaxed">
+                        <div className="p-1.5 rounded bg-purple-900/20 border border-purple-800/30 text-[12px] text-dark-300 whitespace-pre-wrap max-h-24 overflow-y-auto leading-relaxed">
                           {streamingThinking.length > 300 ? streamingThinking.substring(streamingThinking.length - 300) : streamingThinking}
                           <span className="animate-pulse text-purple-400">|</span>
                         </div>
@@ -884,13 +884,13 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
         {/* Input */}
         <div className="px-4 py-2 border-t border-dark-700">
           {pendingPermission && (
-            <div className="flex items-center gap-2 text-orange-400 text-[10px] mb-1">
+            <div className="flex items-center gap-2 text-orange-400 text-[12px] mb-1">
               <AlertCircle size={10} className="animate-pulse" />
               <span>Permission pending — type <code className="bg-dark-800 px-1 rounded">/approve</code> or <code className="bg-dark-800 px-1 rounded">/deny</code></span>
             </div>
           )}
           {!activeModel && (
-            <div className="flex items-center gap-1 text-yellow-500 text-[10px] mb-1">
+            <div className="flex items-center gap-1 text-yellow-500 text-[12px] mb-1">
               <AlertCircle size={10} />
               <span>Select a model in Models tab</span>
             </div>
@@ -943,15 +943,15 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             <div className="px-3 py-2 border-b border-dark-700 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <button onClick={() => setContextPanelTab('terminal')}
-                  className={`px-2 py-0.5 text-[10px] rounded font-medium transition-colors ${contextPanelTab === 'terminal' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
+                  className={`px-2 py-0.5 text-[12px] rounded font-medium transition-colors ${contextPanelTab === 'terminal' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
                   <Terminal size={10} className="inline mr-1" />Activity
                 </button>
                 <button onClick={() => setContextPanelTab('diff')}
-                  className={`px-2 py-0.5 text-[10px] rounded font-medium transition-colors ${contextPanelTab === 'diff' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
+                  className={`px-2 py-0.5 text-[12px] rounded font-medium transition-colors ${contextPanelTab === 'diff' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
                   <FileCode size={10} className="inline mr-1" />Diff
                 </button>
                 <button onClick={() => { setContextPanelTab('files'); if (fileTree.length === 0) fetchFiles(); }}
-                  className={`px-2 py-0.5 text-[10px] rounded font-medium transition-colors ${contextPanelTab === 'files' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
+                  className={`px-2 py-0.5 text-[12px] rounded font-medium transition-colors ${contextPanelTab === 'files' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
                   <Folder size={10} className="inline mr-1" />Files
                 </button>
               </div>
@@ -967,8 +967,8 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                 lastDiff ? <DiffViewer diff={lastDiff} /> : (
                   <div className="flex flex-col items-center justify-center h-full text-dark-500">
                     <FileCode size={24} className="mb-2 opacity-30" />
-                    <p className="text-[10px]">No diffs yet</p>
-                    <p className="text-[9px] mt-1">File edits will show side-by-side diffs here</p>
+                    <p className="text-[12px]">No diffs yet</p>
+                    <p className="text-[10.5px] mt-1">File edits will show side-by-side diffs here</p>
                   </div>
                 )
               ) : (
@@ -976,12 +976,12 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                   {fileTree.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-dark-500">
                       <Folder size={24} className="mb-2 opacity-30" />
-                      <p className="text-[10px]">Loading files...</p>
+                      <p className="text-[12px]">Loading files...</p>
                     </div>
                   ) : (
                     <div className="p-2 space-y-0.5">
                       {fileTree.map((f: string) => (
-                        <div key={f} className="flex items-center gap-1.5 px-2 py-0.5 text-[10px] text-dark-300 hover:bg-dark-800 rounded cursor-pointer">
+                        <div key={f} className="flex items-center gap-1.5 px-2 py-0.5 text-[12px] text-dark-300 hover:bg-dark-800 rounded cursor-pointer">
                           <FileCode size={10} className="text-dark-500 flex-shrink-0" />
                           <span className="truncate">{f}</span>
                         </div>

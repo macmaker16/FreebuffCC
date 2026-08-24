@@ -247,7 +247,7 @@ export default function AgentDashboard({ serverPort }: AgentDashboardProps) {
         <div className="flex items-center gap-3">
           <Activity size={16} className="text-brand-400" />
           <h2 className="text-sm font-semibold">Dashboard</h2>
-          <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+          <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[12px] font-medium ${
             connected ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'
           }`}>
             <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
@@ -257,11 +257,11 @@ export default function AgentDashboard({ serverPort }: AgentDashboardProps) {
         {/* Tab Switcher */}
         <div className="flex gap-1">
           <button onClick={() => setActiveTab('overview')}
-            className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors ${activeTab === 'overview' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-400 hover:text-dark-200'}`}>
+            className={`px-2.5 py-1 rounded text-[12px] font-medium transition-colors ${activeTab === 'overview' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-400 hover:text-dark-200'}`}>
             <BarChart3 size={10} className="inline mr-1" />Overview
           </button>
           <button onClick={() => setActiveTab('activity')}
-            className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors ${activeTab === 'activity' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-400 hover:text-dark-200'}`}>
+            className={`px-2.5 py-1 rounded text-[12px] font-medium transition-colors ${activeTab === 'activity' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-400 hover:text-dark-200'}`}>
             <Activity size={10} className="inline mr-1" />Activity
           </button>
         </div>
@@ -280,26 +280,26 @@ export default function AgentDashboard({ serverPort }: AgentDashboardProps) {
 
           {/* Token Breakdown */}
           <div className="bg-dark-900 border border-dark-700 rounded-lg p-3">
-            <h3 className="text-[11px] font-semibold text-dark-200 mb-3 flex items-center gap-2">
+            <h3 className="text-[13px] font-semibold text-dark-200 mb-3 flex items-center gap-2">
               <TrendingUp size={12} className="text-brand-400" />Token Usage
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-[10px] text-dark-400 mb-1">Prompt Tokens</p>
+                <p className="text-[12px] text-dark-400 mb-1">Prompt Tokens</p>
                 <div className="flex items-center gap-2">
                   <div className="flex-1 h-2 bg-dark-800 rounded-full overflow-hidden">
                     <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(100, (stats.totalPromptTokens / Math.max(1, stats.totalTokens)) * 100)}%` }} />
                   </div>
-                  <span className="text-[10px] text-dark-300 w-16 text-right">{(stats.totalPromptTokens / 1000).toFixed(1)}K</span>
+                  <span className="text-[12px] text-dark-300 w-16 text-right">{(stats.totalPromptTokens / 1000).toFixed(1)}K</span>
                 </div>
               </div>
               <div>
-                <p className="text-[10px] text-dark-400 mb-1">Completion Tokens</p>
+                <p className="text-[12px] text-dark-400 mb-1">Completion Tokens</p>
                 <div className="flex items-center gap-2">
                   <div className="flex-1 h-2 bg-dark-800 rounded-full overflow-hidden">
                     <div className="h-full bg-purple-500 rounded-full" style={{ width: `${Math.min(100, (stats.totalCompletionTokens / Math.max(1, stats.totalTokens)) * 100)}%` }} />
                   </div>
-                  <span className="text-[10px] text-dark-300 w-16 text-right">{(stats.totalCompletionTokens / 1000).toFixed(1)}K</span>
+                  <span className="text-[12px] text-dark-300 w-16 text-right">{(stats.totalCompletionTokens / 1000).toFixed(1)}K</span>
                 </div>
               </div>
             </div>
@@ -308,12 +308,12 @@ export default function AgentDashboard({ serverPort }: AgentDashboardProps) {
           {/* Active Phase */}
           {stats.activePhase && (
             <div className="bg-dark-900 border border-dark-700 rounded-lg p-3">
-              <h3 className="text-[11px] font-semibold text-dark-200 mb-2 flex items-center gap-2">
+              <h3 className="text-[13px] font-semibold text-dark-200 mb-2 flex items-center gap-2">
                 <Zap size={12} className="text-yellow-400" />Active Phase
               </h3>
               <div className="flex items-center gap-2">
                 {Object.entries(PHASE_LABELS).map(([key, label]) => (
-                  <div key={key} className={`flex-1 text-center py-2 rounded text-[10px] font-medium transition-all ${
+                  <div key={key} className={`flex-1 text-center py-2 rounded text-[12px] font-medium transition-all ${
                     stats.activePhase === key
                       ? `${PHASE_COLORS[key] || 'text-dark-300 bg-dark-700'} ring-1 ring-brand-500/30`
                       : 'text-dark-500 bg-dark-800'
@@ -327,20 +327,20 @@ export default function AgentDashboard({ serverPort }: AgentDashboardProps) {
 
           {/* Recent Sessions */}
           <div className="bg-dark-900 border border-dark-700 rounded-lg p-3">
-            <h3 className="text-[11px] font-semibold text-dark-200 mb-2 flex items-center gap-2">
+            <h3 className="text-[13px] font-semibold text-dark-200 mb-2 flex items-center gap-2">
               <MessageSquare size={12} className="text-blue-400" />Recent Sessions
             </h3>
             {conversations.length === 0 ? (
-              <p className="text-[10px] text-dark-500 py-2">No sessions yet. Start chatting to see history here.</p>
+              <p className="text-[12px] text-dark-500 py-2">No sessions yet. Start chatting to see history here.</p>
             ) : (
               <div className="space-y-1">
                 {conversations.slice(0, 10).map(conv => (
                   <div key={conv.id} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-dark-800 transition-colors">
                     <div className="flex-1 min-w-0">
-                      <p className="text-[10px] text-dark-200 truncate">{conv.title || 'Untitled'}</p>
-                      <p className="text-[9px] text-dark-500">{conv.messageCount} messages · {conv.model || 'unknown'}</p>
+                      <p className="text-[12px] text-dark-200 truncate">{conv.title || 'Untitled'}</p>
+                      <p className="text-[10.5px] text-dark-500">{conv.messageCount} messages · {conv.model || 'unknown'}</p>
                     </div>
-                    <span className="text-[9px] text-dark-500 ml-2">{new Date(conv.updatedAt).toLocaleDateString()}</span>
+                    <span className="text-[10.5px] text-dark-500 ml-2">{new Date(conv.updatedAt).toLocaleDateString()}</span>
                   </div>
                 ))}
               </div>
@@ -349,10 +349,10 @@ export default function AgentDashboard({ serverPort }: AgentDashboardProps) {
 
           {/* System Info */}
           <div className="bg-dark-900 border border-dark-700 rounded-lg p-3">
-            <h3 className="text-[11px] font-semibold text-dark-200 mb-2 flex items-center gap-2">
+            <h3 className="text-[13px] font-semibold text-dark-200 mb-2 flex items-center gap-2">
               <Cpu size={12} className="text-green-400" />System
             </h3>
-            <div className="grid grid-cols-3 gap-3 text-[10px]">
+            <div className="grid grid-cols-3 gap-3 text-[12px]">
               <div>
                 <p className="text-dark-500">Server Port</p>
                 <p className="text-dark-200 font-mono">{serverPort || 'Starting...'}</p>
@@ -372,11 +372,11 @@ export default function AgentDashboard({ serverPort }: AgentDashboardProps) {
         /* ===== ACTIVITY TAB (Live Event Stream) ===== */
         <>
           {/* Stats bar */}
-          <div className="flex items-center justify-between px-4 py-1.5 border-b border-dark-700 bg-dark-900/30 flex-shrink-0 text-[10px] text-dark-400">
+          <div className="flex items-center justify-between px-4 py-1.5 border-b border-dark-700 bg-dark-900/30 flex-shrink-0 text-[12px] text-dark-400">
             <span>{stats.totalSessions} sessions · {stats.totalToolCalls} tools · {(stats.totalTokens / 1000).toFixed(1)}K tokens</span>
             <div className="flex items-center gap-2">
               {stats.activePhase && (
-                <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${PHASE_COLORS[stats.activePhase] || 'text-dark-300'}`}>
+                <span className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium ${PHASE_COLORS[stats.activePhase] || 'text-dark-300'}`}>
                   {PHASE_LABELS[stats.activePhase] || stats.activePhase}
                 </span>
               )}
@@ -387,12 +387,12 @@ export default function AgentDashboard({ serverPort }: AgentDashboardProps) {
           </div>
 
           {/* Events List */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-1 font-mono text-[11px]" onScroll={handleScroll}>
+          <div className="flex-1 overflow-y-auto p-2 space-y-1 font-mono text-[13px]" onScroll={handleScroll}>
             {events.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-dark-500 space-y-2">
                 <Activity size={32} className="opacity-30" />
                 <p className="text-xs">No agent activity yet</p>
-                <p className="text-[10px] text-dark-600">Send a message in Chat to see real-time events here</p>
+                <p className="text-[12px] text-dark-600">Send a message in Chat to see real-time events here</p>
               </div>
             )}
 
@@ -406,10 +406,10 @@ export default function AgentDashboard({ serverPort }: AgentDashboardProps) {
           {selectedEvent && (
             <div className="border-t border-dark-700 bg-dark-900/80 p-3 max-h-48 overflow-y-auto flex-shrink-0">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-semibold text-dark-200 uppercase">{selectedEvent.event.type}</span>
+                <span className="text-[12px] font-semibold text-dark-200 uppercase">{selectedEvent.event.type}</span>
                 <button onClick={() => setSelectedEvent(null)} className="text-dark-400 hover:text-white text-xs">✕</button>
               </div>
-              <pre className="text-[10px] text-dark-300 whitespace-pre-wrap break-all">
+              <pre className="text-[12px] text-dark-300 whitespace-pre-wrap break-all">
                 {JSON.stringify(selectedEvent.event.data, null, 2)}
               </pre>
             </div>
@@ -435,7 +435,7 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
     <div className="bg-dark-900 border border-dark-700 rounded-lg p-3">
       <div className="flex items-center gap-2 mb-1.5">
         <div className={`p-1.5 rounded ${colorMap[color] || colorMap.blue}`}>{icon}</div>
-        <span className="text-[10px] text-dark-400">{label}</span>
+        <span className="text-[12px] text-dark-400">{label}</span>
       </div>
       <p className="text-lg font-bold text-white">{value}</p>
     </div>
@@ -475,7 +475,7 @@ function EventRow({ entry, isSelected, onSelect }: { entry: EventEntry; isSelect
         return (
           <div className="flex items-center gap-2">
             <ArrowRight size={11} className="text-purple-400" />
-            <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${PHASE_COLORS[event.data.phase] || 'text-dark-300 bg-dark-700'}`}>
+            <span className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium ${PHASE_COLORS[event.data.phase] || 'text-dark-300 bg-dark-700'}`}>
               {PHASE_LABELS[event.data.phase] || event.data.phase}
             </span>
             <span className="text-dark-500">iter {event.data.iteration}</span>
@@ -500,7 +500,7 @@ function EventRow({ entry, isSelected, onSelect }: { entry: EventEntry; isSelect
               ? <CheckCircle size={11} className="text-green-400" />
               : <XCircle size={11} className="text-red-400" />}
             <ToolBadge name={event.data.tool} />
-            <span className={`text-[10px] ${event.data.success ? 'text-green-400/70' : 'text-red-400/70'}`}>
+            <span className={`text-[12px] ${event.data.success ? 'text-green-400/70' : 'text-red-400/70'}`}>
               {event.data.success ? '✓' : '✗'}
             </span>
             {event.data.duration && (
@@ -564,7 +564,7 @@ function EventRow({ entry, isSelected, onSelect }: { entry: EventEntry; isSelect
       }`}
       onClick={onSelect}
     >
-      <span className="text-[9px] text-dark-600 w-14 flex-shrink-0 font-mono">{formatTime(event.timestamp)}</span>
+      <span className="text-[10.5px] text-dark-600 w-14 flex-shrink-0 font-mono">{formatTime(event.timestamp)}</span>
       <div className="flex-1 min-w-0">{renderContent()}</div>
     </div>
   );
@@ -588,7 +588,7 @@ function ToolBadge({ name }: { name: string }) {
   };
   const color = colors[name] || 'bg-dark-700 text-dark-300';
   return (
-    <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-medium ${color}`}>
+    <span className={`px-1.5 py-0.5 rounded text-[10.5px] font-mono font-medium ${color}`}>
       {name}
     </span>
   );
