@@ -17,6 +17,18 @@ interface Skill {
 }
 
 const BUILTIN_SKILLS: Skill[] = [
+  // Claude Code Superpowers
+  { name: 'tdd', description: 'Test-Driven Development: Red-Green-Refactor loop. Write failing test first, minimal code to pass, refactor.', trigger: '/tdd', category: 'superpower', icon: '🔴' },
+  { name: 'diagnosing-bugs', description: 'Six-phase bug diagnosis: repro, minimize, hypotheses, instrument, fix, regression test.', trigger: '/diagnose', category: 'superpower', icon: '🔬' },
+  { name: 'code-review', description: 'Deep code review: spec compliance, repo standards, error handling, performance, security.', trigger: '/review', category: 'superpower', icon: '📋' },
+  { name: 'improve-architecture', description: 'Analyze and improve codebase architecture: coupling, modules, separation of concerns.', trigger: '/architect', category: 'superpower', icon: '🏗️' },
+  { name: 'debug', description: 'Systematic debugging: reproduce, isolate, hypothesis-test, fix, verify. Never guess.', trigger: '/debug', category: 'superpower', icon: '🔍' },
+  { name: 'verify', description: 'Verification before completion: types, tests, lint, build, requirements check.', trigger: '/verify', category: 'superpower', icon: '✅' },
+  { name: 'write-plan', description: 'Create structured execution plan before coding. Forces thinking before action.', trigger: '/plan', category: 'superpower', icon: '📝' },
+  { name: 'execute-plan', description: 'Execute a plan step by step with progress tracking and verification.', trigger: '/execute', category: 'superpower', icon: '⚡' },
+  { name: 'grill-with-docs', description: 'Deep-dive into codebase with documentation lookup. Trace flows, understand patterns.', trigger: '/grill', category: 'superpower', icon: '🔎' },
+  { name: 'subagent-dispatch', description: 'Spawn isolated sub-agents for parallel research tasks.', trigger: '/dispatch', category: 'superpower', icon: '🤖' },
+  // Standard Skills
   { name: 'review-pr', description: 'Review all staged changes, check for bugs, style issues, and provide a code review summary', trigger: '/review-pr', category: 'code-quality', icon: '🔍' },
   { name: 'fix-bugs', description: 'Find and fix bugs by analyzing error output, reading relevant files, and applying fixes', trigger: '/fix-bugs', category: 'debugging', icon: '🐛' },
   { name: 'explain', description: 'Explain the current project structure, dependencies, and architecture', trigger: '/explain', category: 'learning', icon: '📖' },
@@ -25,6 +37,7 @@ const BUILTIN_SKILLS: Skill[] = [
 ];
 
 const CATEGORY_COLORS: Record<string, string> = {
+  'superpower': 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 text-purple-300 border border-purple-500/30',
   'code-quality': 'bg-blue-500/20 text-blue-400',
   'debugging': 'bg-red-500/20 text-red-400',
   'learning': 'bg-green-500/20 text-green-400',

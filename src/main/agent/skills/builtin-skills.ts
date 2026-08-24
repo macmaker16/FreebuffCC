@@ -162,6 +162,125 @@ export const BUILTIN_SKILLS: SkillDefinition[] = [
       { action: 'search_files', args: { pattern: 'className', file_pattern: '*.tsx' }, description: 'Find components with classes' },
     ],
   },
+  // Claude Code Superpower Skills
+  {
+    name: 'tdd',
+    description: 'Test-Driven Development: Red-Green-Refactor loop. Write a failing test first, then minimal code to pass, then refactor.',
+    trigger: '/tdd',
+    parameters: [
+      { name: 'feature', type: 'string', description: 'Feature or bug to build test-first', required: false },
+    ],
+    steps: [
+      { action: 'search_files', args: { pattern: 'describe\(|test\(|it\(' }, description: 'Find existing test patterns' },
+      { action: 'read_file', args: { file_path: 'package.json' }, description: 'Check test framework' },
+      { action: 'run_command', args: { command: 'npm test -- --listTests 2>/dev/null | head -5' }, description: 'Verify test runner works' },
+    ],
+  },
+  {
+    name: 'diagnosing-bugs',
+    description: 'Six-phase bug diagnosis: build repro, minimize, rank hypotheses, instrument, fix with regression test, clean up.',
+    trigger: '/diagnose',
+    parameters: [
+      { name: 'bug_description', type: 'string', description: 'Description of the bug or error', required: false },
+    ],
+    steps: [
+      { action: 'search_files', args: { pattern: '{{bug_description}}' }, description: 'Search for error references' },
+      { action: 'run_command', args: { command: 'git log --oneline -10' }, description: 'Check recent changes' },
+      { action: 'run_command', args: { command: 'git diff HEAD~3 --stat' }, description: 'See what changed recently' },
+    ],
+  },
+  {
+    name: 'code-review',
+    description: 'Deep code review: check spec compliance, repo standards, error handling, performance, and security.',
+    trigger: '/review',
+    parameters: [
+      { name: 'scope', type: 'string', description: 'File or directory to review', required: false },
+    ],
+    steps: [
+      { action: 'run_command', args: { command: 'git diff --staged --stat' }, description: 'Check staged changes' },
+      { action: 'run_command', args: { command: 'git diff --stat' }, description: 'Check unstaged changes' },
+      { action: 'search_files', args: { pattern: 'TODO|FIXME|HACK|XXX' }, description: 'Find TODO markers' },
+    ],
+  },
+  {
+    name: 'improve-architecture',
+    description: 'Analyze and improve codebase architecture: identify coupling, suggest modules, improve separation of concerns.',
+    trigger: '/architect',
+    parameters: [],
+    steps: [
+      { action: 'list_files', args: { dir_path: 'src', max_depth: '3' }, description: 'Map project structure' },
+      { action: 'search_files', args: { pattern: 'import.*from', file_pattern: '*.ts' }, description: 'Analyze import graph' },
+      { action: 'run_command', args: { command: 'find src -name "*.ts" | wc -l' }, description: 'Count source files' },
+    ],
+  },
+  {
+    name: 'debug',
+    description: 'Systematic debugging: reproduce, isolate, hypothesis-test, fix, verify. Never guess — always reproduce first.',
+    trigger: '/debug',
+    parameters: [
+      { name: 'issue', type: 'string', description: 'The issue to debug', required: false },
+    ],
+    steps: [
+      { action: 'run_command', args: { command: 'git status' }, description: 'Check working state' },
+      { action: 'search_files', args: { pattern: '{{issue}}' }, description: 'Search for issue references' },
+      { action: 'run_command', args: { command: 'npm test 2>&1 | tail -20' }, description: 'Run tests to see failures' },
+    ],
+  },
+  {
+    name: 'verify',
+    description: 'Verification before completion: run tests, check types, lint, build, and confirm all requirements are met.',
+    trigger: '/verify',
+    parameters: [],
+    steps: [
+      { action: 'run_command', args: { command: 'npx tsc --noEmit 2>&1 | tail -10' }, description: 'Type check' },
+      { action: 'run_command', args: { command: 'npm test 2>&1 | tail -20' }, description: 'Run tests' },
+      { action: 'run_command', args: { command: 'npm run build 2>&1 | tail -10' }, description: 'Build project' },
+    ],
+  },
+  {
+    name: 'write-plan',
+    description: 'Create a structured execution plan before starting work. Forces thinking before coding.',
+    trigger: '/plan',
+    parameters: [
+      { name: 'goal', type: 'string', description: 'What you want to accomplish', required: false },
+    ],
+    steps: [
+      { action: 'list_files', args: { dir_path: '.', max_depth: '2' }, description: 'Understand project structure' },
+      { action: 'read_file', args: { file_path: 'README.md' }, description: 'Read project docs' },
+    ],
+  },
+  {
+    name: 'execute-plan',
+    description: 'Execute a plan step by step, tracking progress and verifying each step before moving on.',
+    trigger: '/execute',
+    parameters: [
+      { name: 'plan', type: 'string', description: 'Plan to execute (or reference to saved plan)', required: false },
+    ],
+    steps: [
+      { action: 'run_command', args: { command: 'git status --short' }, description: 'Check current state' },
+    ],
+  },
+  {
+    name: 'grill-with-docs',
+    description: 'Deep-dive into a specific part of the codebase with documentation lookup. Ask questions, trace flows, understand patterns.',
+    trigger: '/grill',
+    parameters: [
+      { name: 'topic', type: 'string', description: 'Topic or module to investigate', required: false },
+    ],
+    steps: [
+      { action: 'search_files', args: { pattern: '{{topic}}' }, description: 'Find all references' },
+      { action: 'list_files', args: { dir_path: 'src', max_depth: '2' }, description: 'Map related files' },
+    ],
+  },
+  {
+    name: 'subagent-dispatch',
+    description: 'Spawn isolated sub-agents for parallel research tasks. Each gets its own context window.',
+    trigger: '/dispatch',
+    parameters: [
+      { name: 'task', type: 'string', description: 'Task for the sub-agent', required: false },
+    ],
+    steps: [],
+  },
 ];
 
 /**
