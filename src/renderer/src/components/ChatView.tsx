@@ -131,6 +131,28 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
   const [contextPanelWidth, setContextPanelWidth] = useState(380);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [streamingThinking, setStreamingThinking] = useState('');
+
+  // Notification sound when agent finishes
+  const playNotificationSound = useCallback(() => {
+    try {
+      const ctx = new AudioContext();
+      const now = ctx.currentTime;
+      // Two-tone ascending chime
+      [523.25, 659.25, 783.99].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, now + i * 0.12);
+        gain.gain.linearRampToValueAtTime(0.15, now + i * 0.12 + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.4);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(now + i * 0.12);
+        osc.stop(now + i * 0.12 + 0.5);
+      });
+      setTimeout(() => ctx.close(), 2000);
+    } catch { /* AudioContext not available */ }
+  }, []);
   const sessionIdRef = useRef<string | null>(null);
   const streamAbortRef = useRef<(() => void) | null>(null);
   const isDragging = useRef(false);
@@ -302,6 +324,8 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
               }
               return '';
             });
+            // Play notification sound
+            playNotificationSound();
             // Auto-clear todos after brief delay
             setTimeout(() => setTodos([]), 2000);
             setLoading(false);
