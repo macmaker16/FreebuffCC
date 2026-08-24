@@ -25,6 +25,61 @@ interface Props {
 
 type ViewMode = 'chat' | 'sessions' | 'help' | 'project';
 
+function PermissionCard({ msg, onApprove, onUpdateMessages }: {
+  msg: ChatMessage;
+  onApprove: (action: 'approve' | 'deny', alwaysAllow?: boolean) => Promise<void>;
+  onUpdateMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [resolved, setResolved] = useState<string | null>(null);
+  const req = msg.permissionRequest!;
+
+  const handle = async (action: 'approve' | 'deny', always = false) => {
+    await onApprove(action, always);
+    const label = action === 'deny' ? '❌ Denied' : always ? '✅ Full access granted' : '✅ Allowed';
+    setResolved(label);
+    onUpdateMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: label, permissionRequest: undefined } : m));
+  };
+
+  if (resolved) return null; // replaced by the updated message content
+
+  return (
+    <div className="max-w-[80%]">
+      <div className="rounded-lg px-3 py-2 bg-orange-500/10 border border-orange-500/30">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <AlertCircle size={12} className="text-orange-400" />
+            <span className="text-[11px] font-medium text-orange-300">Permission Required</span>
+          </div>
+          <div className="relative">
+            <button onClick={() => setOpen(!open)}
+              className="px-2 py-0.5 bg-dark-700 hover:bg-dark-600 rounded text-[10px] text-dark-200 font-medium transition-colors flex items-center gap-1">
+              Choose <ChevronDown size={10} />
+            </button>
+            {open && (
+              <div className="absolute right-0 top-full mt-1 z-50 bg-dark-800 border border-dark-600 rounded-lg shadow-xl min-w-[160px] overflow-hidden">
+                <button onClick={() => { setOpen(false); handle('approve'); }}
+                  className="w-full px-3 py-1.5 text-left text-[10px] text-dark-200 hover:bg-dark-700 flex items-center gap-2 transition-colors">
+                  <Check size={10} className="text-brand-400" /> Allow (this time)
+                </button>
+                <button onClick={() => { setOpen(false); handle('approve', true); }}
+                  className="w-full px-3 py-1.5 text-left text-[10px] text-dark-200 hover:bg-dark-700 flex items-center gap-2 transition-colors border-t border-dark-600">
+                  <CheckCircle2 size={10} className="text-green-400" /> Full Access (skip all)
+                </button>
+                <button onClick={() => { setOpen(false); handle('deny'); }}
+                  className="w-full px-3 py-1.5 text-left text-[10px] text-red-400 hover:bg-dark-700 flex items-center gap-2 transition-colors border-t border-dark-600">
+                  <X size={10} /> Deny
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        <p className="text-[10px] text-dark-400 mt-1">{req.description}</p>
+      </div>
+    </div>
+  );
+}
+
 function ThinkingBlock({ thinking }: { thinking: string }) {
   const [expanded, setExpanded] = useState(false);
   const preview = thinking.length > 120 ? thinking.substring(0, 120) + '...' : thinking;
@@ -764,34 +819,8 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                     </div>
                   )}
                   {msg.permissionRequest ? (
-                    /* Permission request — inline card with approve/deny buttons */
-                    <div className="max-w-[80%] rounded-lg px-3 py-2 bg-orange-500/10 border border-orange-500/30">
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <AlertCircle size={12} className="text-orange-400" />
-                        <span className="text-[11px] font-medium text-orange-300">Permission Required</span>
-                      </div>
-                      <p className="text-[10px] text-dark-300 mb-2">{msg.permissionRequest.description}</p>
-                      <div className="flex items-center gap-1.5">
-                        <button onClick={async () => {
-                          await handlePermission('approve', true);
-                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: '✅ Always allowed', permissionRequest: undefined } : m));
-                        }} className="px-2 py-1 bg-green-600 hover:bg-green-700 rounded text-[10px] text-white font-medium transition-colors">
-                          Always Allow
-                        </button>
-                        <button onClick={async () => {
-                          await handlePermission('approve');
-                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: '✅ Allowed', permissionRequest: undefined } : m));
-                        }} className="px-2 py-1 bg-brand-600 hover:bg-brand-700 rounded text-[10px] text-white font-medium transition-colors">
-                          Allow
-                        </button>
-                        <button onClick={async () => {
-                          await handlePermission('deny');
-                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: '❌ Denied', permissionRequest: undefined } : m));
-                        }} className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-[10px] text-white font-medium transition-colors">
-                          Deny
-                        </button>
-                      </div>
-                    </div>
+                    /* Permission request — inline card with dropdown */
+                    <PermissionCard msg={msg} onApprove={handlePermission} onUpdateMessages={setMessages} />
                   ) : (
                     <div className={`max-w-[80%] rounded-lg px-3 py-2 relative ${msg.role === 'user' ? 'bg-brand-600 text-white' : 'bg-dark-800 text-dark-100'}`}>
                       {msg.thinking && msg.role === 'assistant' && (
