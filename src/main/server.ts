@@ -280,6 +280,10 @@ const SYSTEM_PROMPT_STATIC = `You are Michaelangelo, an expert AI coding agent: 
 - run_command — shell. Destructive system commands are blocked; other commands may require one-click user approval.
 - web_search / web_fetch / web_lookup — current external information via DuckDuckGo (free, no key).
 - browser_navigate / browser_screenshot / browser_get_content / browser_evaluate / browser_close — headless browser for visual analysis. Use after creating a UI to verify rendering.
+- git_status / git_diff / git_stage / git_commit / git_branch / git_log — full git workflow. Stage changes, commit, create branches.
+- code_symbols — extract function/class/interface/import/export declarations from a file. Use to understand structure before editing.
+- diagnose_error — analyze error messages and stack traces. Reads the source file, shows context, suggests a fix.
+- find_files — find files by name pattern (like the find command). Excludes node_modules, .git, dist.
 - dispatch_agent — spawn an isolated read-only sub-agent for independent research; merge its summary.
 
 ## RESPONSE STYLE
@@ -587,6 +591,146 @@ async function executeWebLookup(args: { query: string; max_chars?: number }): Pr
 
 interface ToolExecResult { output: string; diff?: any; }
 
+// ============================================================================
+// GIT WORKFLOW TOOLS
+// ============================================================================
+
+async function executeGitStatus(_args: any): Promise<string> {
+  const { stdout } = await execAsync('git status --short', { cwd: getWorkspaceDir(), timeout: 10000, maxBuffer: 1024 * 1024 });
+  return stdout.trim() || 'Working tree clean — no changes.';
+}
+
+async function executeGitDiff(args: { file_path?: string }): Promise<string> {
+  const cmd = args.file_path ? `git diff -- "${args.file_path}"` : 'git diff';
+  const { stdout } = await execAsync(cmd, { cwd: getWorkspaceDir(), timeout: 15000, maxBuffer: 2 * 1024 * 1024 });
+  return stdout.trim() || 'No changes staged.';
+}
+
+async function executeGitStage(args: { files: string[] }): Promise<string> {
+  if (!args.files || args.files.length === 0) return 'ERROR: files array required';
+  const cmd = `git add ${args.files.map(f => `"${f}"`).join(' ')}`;
+  const { stdout, stderr } = await execAsync(cmd, { cwd: getWorkspaceDir(), timeout: 10000, maxBuffer: 1024 * 1024 });
+  return `SUCCESS: Staged ${args.files.length} file(s).${stderr ? '\n' + stderr : ''}`;
+}
+
+async function executeGitCommit(args: { message: string }): Promise<string> {
+  if (!args.message) return 'ERROR: message required';
+  const { stdout, stderr } = await execAsync(`git commit -m "${args.message.replace(/"/g, '\"')}"`, { cwd: getWorkspaceDir(), timeout: 15000, maxBuffer: 1024 * 1024 });
+  return `SUCCESS: ${stdout.trim()}${stderr ? '\n' + stderr : ''}`;
+}
+
+async function executeGitBranch(args: { name: string }): Promise<string> {
+  if (!args.name) return 'ERROR: branch name required';
+  const { stdout, stderr } = await execAsync(`git checkout -b "${args.name}"`, { cwd: getWorkspaceDir(), timeout: 10000, maxBuffer: 1024 * 1024 });
+  return `SUCCESS: Created and switched to branch '${args.name}'.${stdout.trim()}${stderr ? '\n' + stderr : ''}`;
+}
+
+async function executeGitLog(args: { count?: number }): Promise<string> {
+  const n = args.count || 10;
+  const { stdout } = await execAsync(`git log --oneline -${n}`, { cwd: getWorkspaceDir(), timeout: 10000, maxBuffer: 1024 * 1024 });
+  return stdout.trim() || 'No commits found.';
+}
+
+// ============================================================================
+// AST CODE SYMBOLS TOOL
+// ============================================================================
+
+async function executeCodeSymbols(args: { file_path: string }): Promise<string> {
+  if (!args.file_path) return 'ERROR: file_path required';
+  const fullPath = resolvePath(args.file_path);
+  let content: string;
+  try { content = await readFile(fullPath, 'utf-8'); } catch { return `ERROR: File not found: ${args.file_path}`; }
+  const lines = content.split('\n');
+  const symbols: string[] = [];
+  // Extract function/class/export declarations
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    // Function declarations
+    const fnMatch = trimmed.match(/^(export\s+)?(async\s+)?function\s+(\w+)/);
+    if (fnMatch) { symbols.push(`L${i + 1} function ${fnMatch[3]}${fnMatch[1] ? ' (exported)' : ''}`); continue; }
+    // Arrow functions assigned to const/let/var
+    const arrowMatch = trimmed.match(/^(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(async\s+)?\(/);
+    if (arrowMatch) { symbols.push(`L${i + 1} ${arrowMatch[2]} ${arrowMatch[3]}${arrowMatch[1] ? ' (exported)' : ''}`); continue; }
+    // Class declarations
+    const classMatch = trimmed.match(/^(export\s+)?(abstract\s+)?class\s+(\w+)/);
+    if (classMatch) { symbols.push(`L${i + 1} class ${classMatch[3]}${classMatch[1] ? ' (exported)' : ''}`); continue; }
+    // Interface/type declarations
+    const ifaceMatch = trimmed.match(/^(export\s+)?(interface|type)\s+(\w+)/);
+    if (ifaceMatch) { symbols.push(`L${i + 1} ${ifaceMatch[2]} ${ifaceMatch[3]}${ifaceMatch[1] ? ' (exported)' : ''}`); continue; }
+    // Import statements
+    const importMatch = trimmed.match(/^import\s+.*from\s+['"](.+)['"]/,);
+    if (importMatch) { symbols.push(`L${i + 1} import from '${importMatch[1]}'`); continue; }
+    // Export default
+    if (trimmed.startsWith('export default')) { symbols.push(`L${i + 1} export default`); }
+  }
+  return symbols.length > 0 ? symbols.join('\n') : 'No symbols found (file may be empty or non-code).';
+}
+
+// ============================================================================
+// ERROR DIAGNOSIS TOOL
+// ============================================================================
+
+async function executeDiagnoseError(args: { error_text: string; file_path?: string }): Promise<string> {
+  if (!args.error_text) return 'ERROR: error_text required';
+  const diag: string[] = [];
+  diag.push('## Error Diagnosis');
+  diag.push(`\n**Error:** ${args.error_text.substring(0, 500)}`);
+  // Extract error type
+  const typeMatch = args.error_text.match(/(TypeError|ReferenceError|SyntaxError|Error|ENOENT|EACCES|ModuleNotFoundError|ImportError|AttributeError|ValueError|RuntimeError|AssertionError)/i);
+  if (typeMatch) diag.push(`**Type:** ${typeMatch[1]}`);
+  // Extract file and line from stack trace
+  const stackMatches = args.error_text.match(/(?:at|File ")(.+?)":?(\d+)?/g);
+  if (stackMatches && stackMatches.length > 0) {
+    diag.push('\n**Stack trace (relevant frames):**');
+    for (const m of stackMatches.slice(0, 5)) diag.push(`  ${m.trim()}`);
+  }
+  // Try to read the referenced file
+  const filePath = args.file_path || args.error_text.match(/(?:at|File ")(.+?\.\w+)/)?.[1];
+  if (filePath && !filePath.includes('node_modules')) {
+    try {
+      const content = await readFile(resolvePath(filePath), 'utf-8');
+      const lines = content.split('\n');
+      const lineNum = parseInt(args.error_text.match(/:(\d+)/)?.[1] || '0', 10);
+      if (lineNum > 0 && lineNum <= lines.length) {
+        const start = Math.max(0, lineNum - 4);
+        const end = Math.min(lines.length, lineNum + 3);
+        diag.push(`\n**Source (${filePath}:${lineNum}):**`);
+        for (let i = start; i < end; i++) {
+          const marker = i + 1 === lineNum ? ' >> ' : '    ';
+          diag.push(`${marker}${i + 1}: ${lines[i]}`);
+        }
+      }
+    } catch { /* file not readable */ }
+  }
+  // Suggest fix based on error type
+  diag.push('\n**Suggested fix:**');
+  if (typeMatch) {
+    switch (typeMatch[1].toLowerCase()) {
+      case 'enoent': diag.push('  File or directory not found. Check the path and ensure parent directories exist.'); break;
+      case 'eacces': diag.push('  Permission denied. Check file permissions.'); break;
+      case 'typeerror': diag.push('  Wrong type used. Check if the variable is null/undefined or the wrong type.'); break;
+      case 'referenceerror': diag.push('  Variable not defined. Check spelling and imports.'); break;
+      case 'syntaxerror': diag.push('  Syntax error. Check for missing brackets, commas, or semicolons.'); break;
+      default: diag.push(`  Review the error and check the referenced source code.`);
+    }
+  }
+  return diag.join('\n');
+}
+
+// ============================================================================
+// FIND FILES TOOL (enhanced directory listing)
+// ============================================================================
+
+async function executeFindFiles(args: { pattern?: string; dir?: string }): Promise<string> {
+  const dir = args.dir ? resolvePath(args.dir) : getWorkspaceDir();
+  const pattern = args.pattern || '*';
+  try {
+    const { stdout } = await execAsync(`find . -name "${pattern}" -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" -not -path "*/.next/*" 2>/dev/null | head -100`, { cwd: dir, timeout: 10000, maxBuffer: 1024 * 1024 });
+    return stdout.trim() || 'No files found.';
+  } catch { return 'ERROR: find command failed'; }
+}
+
 function executeTodoWrite(sessionId: string, args: any): string {
   const todos: TodoItem[] = Array.isArray(args.todos) ? args.todos : [];
   const valid = todos.filter(t => t && typeof t.content === 'string' && ['pending', 'in_progress', 'completed'].includes(t.status));
@@ -650,6 +794,15 @@ async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
     case 'web_search': return { output: await executeWebSearch(args) };
     case 'web_fetch': return { output: await executeWebFetch(args) };
     case 'web_lookup': return { output: await executeWebLookup(args) };
+    case 'git_status': return { output: await executeGitStatus(args) };
+    case 'git_diff': return { output: await executeGitDiff(args) };
+    case 'git_stage': return { output: await executeGitStage(args) };
+    case 'git_commit': return { output: await executeGitCommit(args) };
+    case 'git_branch': return { output: await executeGitBranch(args) };
+    case 'git_log': return { output: await executeGitLog(args) };
+    case 'code_symbols': return { output: await executeCodeSymbols(args) };
+    case 'diagnose_error': return { output: await executeDiagnoseError(args) };
+    case 'find_files': return { output: await executeFindFiles(args) };
     case 'browser_navigate':
     case 'browser_screenshot':
     case 'browser_get_content':
@@ -1062,9 +1215,7 @@ async function runStreamingAgent(
         ...(toolExecResult.diff ? { diff: toolExecResult.diff } : {}),
       });
 
-      messages.push({ role: 'tool', content: toolResult, tool_call_id: toolCall.id });
-
-      // Save tool execution to conversation
+      messages.push({ role: 'tool', content: toolResult, tool_call_id: toolCall.id });      // Save tool execution to conversation
       if (conversationId && conversationStore) {
         await conversationStore.addMessage(conversationId, {
           id: `tool_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
@@ -1072,7 +1223,17 @@ async function runStreamingAgent(
         });
       }
     }
+
+    // Context compression in streaming loop
+    try {
+      const compressed = await compressionEngine.maybeCompress(messages);
+      if (compressed) {
+        console.log(`[StreamingAgent] Context compressed: ${compressed.stats.messagesCompressed} messages`);
+        sendEvent('context_compression', compressed.stats);
+      }
+    } catch { /* compression is best-effort */ }
   }
+
 
   // Max iterations reached (not aborted) — force a final summary
   let aborted = signal.aborted;
@@ -1197,6 +1358,15 @@ const TOOL_DEFINITIONS = [
   { type: 'function', function: { name: 'browser_get_content', description: 'Get the text content of the current page or a specific element.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector (default: entire page)' }, max_length: { type: 'number', description: 'Max characters (default 5000)' } }, required: [] } } },
   { type: 'function', function: { name: 'browser_evaluate', description: 'Evaluate JavaScript in the page context. Useful for querying DOM state, checking element counts, measuring sizes.', parameters: { type: 'object', properties: { expression: { type: 'string', description: 'JavaScript expression to evaluate' } }, required: ['expression'] } } },
   { type: 'function', function: { name: 'browser_close', description: 'Close the headless browser. Call when done with visual analysis.', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'git_status', description: 'Show the working tree status. Use before committing to see what changed.', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'git_diff', description: 'Show file changes not yet staged. Pass file_path for a specific file.', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Optional specific file to diff' } }, required: [] } } },
+  { type: 'function', function: { name: 'git_stage', description: 'Stage files for commit using git add.', parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'string' }, description: 'Array of file paths to stage' } }, required: ['files'] } } },
+  { type: 'function', function: { name: 'git_commit', description: 'Commit staged changes with a message. Stage files first with git_stage.', parameters: { type: 'object', properties: { message: { type: 'string', description: 'Commit message' } }, required: ['message'] } } },
+  { type: 'function', function: { name: 'git_branch', description: 'Create and switch to a new branch.', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Branch name' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'git_log', description: 'Show recent commit history.', parameters: { type: 'object', properties: { count: { type: 'number', description: 'Number of commits to show (default 10)' } }, required: [] } } },
+  { type: 'function', function: { name: 'code_symbols', description: 'Extract all symbols (functions, classes, interfaces, imports, exports) from a file. Use to understand file structure without reading the full content.', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Path to the file to analyze' } }, required: ['file_path'] } } },
+  { type: 'function', function: { name: 'diagnose_error', description: 'Analyze an error message or stack trace. Reads the referenced file, shows the error context, and suggests a fix.', parameters: { type: 'object', properties: { error_text: { type: 'string', description: 'The full error message or stack trace' }, file_path: { type: 'string', description: 'Optional file path where the error occurred' } }, required: ['error_text'] } } },
+  { type: 'function', function: { name: 'find_files', description: 'Find files by name pattern (like find command). Excludes node_modules, .git, dist.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'Filename pattern, e.g. "*.test.ts", "config.*"' }, dir: { type: 'string', description: 'Directory to search in (default: workspace root)' } }, required: [] } } },
 ];
 
 async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, model: string, provider: string, userMessages: ChatMessage[], conversationId?: string): Promise<{ messages: ChatMessage[]; iterations: number; tokenUsage: { prompt: number; completion: number } }> {
@@ -1288,6 +1458,17 @@ async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, 
           role: 'tool', content: result, timestamp: Date.now(),
         });
       }
+    }
+
+    // Context compression: if context is too large, compress older messages
+    try {
+      const compressed = await compressionEngine.maybeCompress(messages);
+      if (compressed) {
+        console.log(`[Agent] Context compressed: ${compressed.stats.messagesCompressed} messages, ${compressed.stats.totalTokensBefore} -> ${compressed.stats.totalTokensAfter} tokens`);
+        agentEventBus.emit('context_compression', session, compressed.stats);
+      }
+    } catch (err: any) {
+      console.warn('[Agent] Context compression failed:', err.message);
     }
   }
 
