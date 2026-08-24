@@ -49,6 +49,7 @@ interface SettingsStore {
   togetherApiKey: string;
   mistralApiKey: string;
   cohereApiKey: string;
+  coderabbitApiKey: string;
   localLlmEndpoint: string;
   localLlmApiKey: string;
   workspace: string;
@@ -76,7 +77,7 @@ const store = new Store<SettingsStore>({
   defaults: {
     openrouterApiKey: '', nvidiaNimApiKey: '', openaiApiKey: '', anthropicApiKey: '',
     deepseekApiKey: '', geminiApiKey: '', groqApiKey: '', togetherApiKey: '',
-    mistralApiKey: '', cohereApiKey: '',
+    mistralApiKey: '', cohereApiKey: '', coderabbitApiKey: '',
     localLlmEndpoint: 'http://localhost:11434/v1', localLlmApiKey: 'ollama',
     workspace: '',
   },

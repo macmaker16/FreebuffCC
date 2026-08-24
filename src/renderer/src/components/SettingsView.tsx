@@ -23,6 +23,10 @@ const PROVIDERS = [
   { key: 'cohereApiKey', label: 'Cohere', url: 'dashboard.cohere.com/api-keys', desc: 'Command R+, Command R', placeholder: '' },
 ];
 
+const TOOL_CONFIG = [
+  { key: 'coderabbitApiKey', label: 'CodeRabbit', color: 'purple', url: 'coderabbit.ai/settings/api-keys', desc: 'AI code review (Agentic API key)', placeholder: 'cr-...' },
+];
+
 export default function SettingsView({ onSettingsSaved }: Props) {
   const [form, setForm] = useState<Record<string, string>>({});
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
@@ -142,6 +146,37 @@ export default function SettingsView({ onSettingsSaved }: Props) {
                   placeholder={p.placeholder || `Enter ${p.label} API key...`}
                   className="w-full pl-8 pr-8 py-2 bg-dark-800 border border-dark-700 rounded font-mono text-[11px] focus:outline-none focus:border-brand-500"
                 />
+                <button onClick={() => setShowKeys(prev => ({ ...prev, [p.key]: !prev[p.key] }))}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-white">
+                  {showKeys[p.key] ? <EyeOff size={12} /> : <Eye size={12} />}
+                </button>
+              </div>
+            </section>
+          );
+        })}
+      </div>
+
+      {/* Tool Integrations */}
+      <div className="space-y-2">
+        <p className="text-[10px] text-dark-500 uppercase tracking-wider font-semibold">Tool Integrations</p>
+        {TOOL_CONFIG.map(p => {
+          const hasKey = !!form[p.key];
+          return (
+            <section key={p.key} className="bg-dark-900 rounded-lg border border-dark-700 p-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2">
+                  {hasKey ? <CheckCircle size={12} className="text-green-500" /> : <div className="w-3 h-3 rounded-full border border-dark-600" />}
+                  <h3 className="text-xs font-semibold">{p.label}</h3>
+                </div>
+                <a href={`https://${p.url}`} target="_blank" rel="noopener noreferrer"
+                  className="text-[10px] text-brand-400 hover:underline">{p.url}</a>
+              </div>
+              <p className="text-[10px] text-dark-400 mb-2">{p.desc}</p>
+              <div className="relative">
+                <Key size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dark-500" />
+                <input type={showKeys[p.key] ? 'text' : 'password'} value={form[p.key] || ''}
+                  onChange={e => handleChange(p.key, e.target.value)} placeholder={p.placeholder || `Enter ${p.label} API key...`}
+                  className="w-full pl-8 pr-8 py-2 bg-dark-800 border border-dark-700 rounded font-mono text-[11px] focus:outline-none focus:border-brand-500" />
                 <button onClick={() => setShowKeys(prev => ({ ...prev, [p.key]: !prev[p.key] }))}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-white">
                   {showKeys[p.key] ? <EyeOff size={12} /> : <Eye size={12} />}

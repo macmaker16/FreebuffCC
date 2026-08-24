@@ -86,6 +86,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/test-gen', description: 'Auto-generate tests for a file', usage: '/test-gen <file>', category: 'agent' },
   { name: '/format', description: 'Auto-format all files with prettier/black', usage: '/format [file]', category: 'agent' },
   { name: '/persona', description: 'Set custom system prompt for the agent', usage: '/persona <prompt>', category: 'project' },
+  { name: '/coderabbit', description: 'Run CodeRabbit AI code review on current changes', usage: '/coderabbit [file-or-dir]', category: 'agent' },
 
   // Info
   { name: '/help', description: 'Show all available commands', usage: '/help', category: 'info' },
@@ -156,6 +157,7 @@ export class SlashCommandHandler {
       case '/test-gen': return this.cmdTestGen(args);
       case '/format': return this.cmdFormat(args);
       case '/persona': return this.cmdPersona(args);
+      case '/coderabbit': return this.cmdCoderabbit(args);
       default:
         return {
           response: `Unknown command: ${command}\nType /help to see available commands.`,
@@ -670,6 +672,64 @@ export class SlashCommandHandler {
       await require('fs/promises').writeFile(personaFile, prompt, 'utf-8');
       return { response: `**Persona saved!** The agent will use this custom system prompt in future sessions.\n\n> ${prompt.substring(0, 200)}`, meta: true };
     } catch (err: any) { return { response: `Failed to save persona: ${err.message}`, meta: true }; }
+  }
+
+  // ==========================================================================
+  // /coderabbit — Run CodeRabbit AI code review
+  // ==========================================================================
+
+  private async cmdCoderabbit(target: string): Promise<SlashCommandResult> {
+    // Check if coderabbit CLI is available
+    let hasCli = false;
+    try {
+      await execAsync('coderabbit --version', { timeout: 5000 });
+      hasCli = true;
+    } catch { /* not installed */ }
+
+    // Check for API key in store
+    const apiKey = require('electron-store') ? '' : ''; // will be injected from server
+
+    if (!hasCli) {
+      // Fallback: use the CodeRabbit API directly via fetch
+      // For now, provide instructions
+      return {
+        response: `**CodeRabbit CLI not found.**\n\nTo use CodeRabbit reviews:\n1. Install: npm install -g coderabbit-cli\n2. Or use WSL: wsl coderabbit review\n3. Or set CODERABBIT_API_KEY in Settings\n\n**Alternative:** The agent can perform its own code review using /review`,
+        meta: true,
+      };
+    }
+
+    // Run coderabbit review
+    const args = target ? `review --include-untracked -- ${target}` : 'review --include-untracked';
+    try {
+      const { stdout, stderr } = await execAsync(`coderabbit ${args} --agent 2>&1`, {
+        cwd: this.workspace,
+        timeout: 120000,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      const output = stdout.trim() || stderr.trim();
+      if (!output) return { response: 'CodeRabbit found no issues.', meta: true };
+      // Parse the agent output (JSON events)
+      const lines = output.split('\n');
+      const findings: string[] = [];
+      for (const line of lines) {
+        try {
+          const event = JSON.parse(line);
+          if (event.type === 'review_summary' || event.type === 'finding') {
+            findings.push(event.message || event.summary || JSON.stringify(event));
+          }
+        } catch { /* plain text output */
+          if (line.trim()) findings.push(line.trim());
+        }
+      }
+      return {
+        response: findings.length > 0
+          ? `**CodeRabbit Review:**\n\n${findings.join('\n\n')}`
+          : `**CodeRabbit:** No issues found.\n\n${output.substring(0, 500)}`,
+        meta: true,
+      };
+    } catch (err: any) {
+      return { response: `**CodeRabbit error:** ${err.message}`, meta: true };
+    }
   }
 }
 
