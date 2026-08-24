@@ -1504,11 +1504,8 @@ async function runStreamingAgent(
     ...userMessages,
   ];
 
-  // Restore any todos from a previous turn of this session
-  const existingTodos = sessionTodos.get(sessionId);
-  if (existingTodos?.length) {
-    sendEvent('todos_updated', { todos: existingTodos });
-  }
+  // Clear stale todos from previous turns — each new user message starts fresh
+  sessionTodos.delete(sessionId);
 
   sendEvent('agent_start', {
     model, provider,

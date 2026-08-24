@@ -244,6 +244,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
     setInput('');
     setLoading(true);
     setToolActivity([]);
+    setTodos([]); // Clear stale todos from previous task
 
     try {
       const apiMessages = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }));
@@ -348,6 +349,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
       }]);
       setLoading(false);
       setToolActivity([]);
+      setTodos([]); // Clear stale todos on error
     }
     inputRef.current?.focus();
   };
