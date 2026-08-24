@@ -1,6 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ['./src/renderer/index.html', './src/renderer/src/**/*.{js,ts,jsx,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
@@ -10,9 +11,17 @@ module.exports = {
           800: '#0b5dab', 900: '#104f86', 950: '#0f3151',
         },
         dark: {
-          50: '#f6f6f7', 100: '#e2e2e5', 200: '#c4c5cb', 300: '#9fa0a9',
-          400: '#7b7c87', 500: '#61626e', 600: '#4d4d57', 700: '#3f3f47',
-          800: '#27272f', 900: '#1a1a21', 950: '#101014',
+          50: 'rgb(var(--dark-50) / <alpha-value>)',
+          100: 'rgb(var(--dark-100) / <alpha-value>)',
+          200: 'rgb(var(--dark-200) / <alpha-value>)',
+          300: 'rgb(var(--dark-300) / <alpha-value>)',
+          400: 'rgb(var(--dark-400) / <alpha-value>)',
+          500: 'rgb(var(--dark-500) / <alpha-value>)',
+          600: 'rgb(var(--dark-600) / <alpha-value>)',
+          700: 'rgb(var(--dark-700) / <alpha-value>)',
+          800: 'rgb(var(--dark-800) / <alpha-value>)',
+          900: 'rgb(var(--dark-900) / <alpha-value>)',
+          950: 'rgb(var(--dark-950) / <alpha-value>)',
         },
       },
     },

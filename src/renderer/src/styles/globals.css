@@ -2,14 +2,61 @@
 @tailwind components;
 @tailwind utilities;
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: #1a1a21; }
-::-webkit-scrollbar-thumb { background: #3f3f47; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #4d4d57; }
+/* ============================================================================
+   THEME CSS VARIABLES
+   Dark mode (default) and Light mode color palettes.
+   All dark-* Tailwind classes resolve to these variables.
+   ============================================================================ */
 
+/* DARK THEME (default) */
+.dark {
+  --dark-50: 246 246 247;
+  --dark-100: 226 226 229;
+  --dark-200: 196 197 203;
+  --dark-300: 159 160 169;
+  --dark-400: 123 124 135;
+  --dark-500: 97 98 110;
+  --dark-600: 77 77 87;
+  --dark-700: 63 63 71;
+  --dark-800: 39 39 47;
+  --dark-900: 26 26 33;
+  --dark-950: 16 16 20;
+  color-scheme: dark;
+}
+
+/* LIGHT THEME */
+.light {
+  --dark-50: 10 10 14;
+  --dark-100: 16 16 20;
+  --dark-200: 26 26 33;
+  --dark-300: 39 39 47;
+  --dark-400: 63 63 71;
+  --dark-500: 97 98 110;
+  --dark-600: 196 197 203;
+  --dark-700: 210 210 215;
+  --dark-800: 230 230 235;
+  --dark-900: 245 245 248;
+  --dark-950: 255 255 255;
+  color-scheme: light;
+}
+
+/* ============================================================================
+   SCROLLBAR STYLING
+   ============================================================================ */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: rgb(var(--dark-900)); }
+::-webkit-scrollbar-thumb { background: rgb(var(--dark-600)); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--dark-500)); }
+
+/* ============================================================================
+   TITLEBAR (Electron drag region)
+   ============================================================================ */
 .titlebar-drag { -webkit-app-region: drag; }
 .titlebar-drag button { -webkit-app-region: no-drag; }
 
+/* ============================================================================
+   ANIMATIONS
+   ============================================================================ */
 @keyframes typing {
   0%, 60%, 100% { transform: translateY(0); }
   30% { transform: translateY(-8px); }
@@ -25,10 +72,79 @@
 .pulse-glow { animation: pulse-glow 2s infinite; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
-.spinner { border: 2px solid #3f3f47; border-top-color: #29a7ff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+.spinner { border: 2px solid rgb(var(--dark-600)); border-top-color: #29a7ff; border-radius: 50%; animation: spin 0.8s linear infinite; }
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
 .animate-fade-in { animation: fadeIn 0.3s ease; }
+
+/* ============================================================================
+   LIGHT THEME OVERRIDES
+   Override specific problematic styles that don't use dark-* tokens
+   ============================================================================ */
+.light body {
+  background-color: #f5f5f8;
+  color: #101014;
+}
+
+.light .bg-dark-950 { background-color: rgb(255 255 255); }
+.light .bg-dark-900 { background-color: rgb(245 245 248); }
+.light .bg-dark-800 { background-color: rgb(230 230 235); }
+.light .bg-dark-700 { background-color: rgb(210 210 215); }
+.light .bg-dark-600 { background-color: rgb(196 197 203); }
+
+.light .text-dark-50 { color: #101014; }
+.light .text-dark-100 { color: #1a1a21; }
+.light .text-dark-200 { color: #27272f; }
+.light .text-dark-300 { color: #3f3f47; }
+.light .text-dark-400 { color: #4d4d57; }
+.light .text-dark-500 { color: #61626e; }
+
+.light .border-dark-700 { border-color: rgb(210 210 215); }
+.light .border-dark-800 { border-color: rgb(230 230 235); }
+.light .border-dark-600 { border-color: rgb(196 197 203); }
+
+.light .placeholder-dark-500::placeholder { color: #9fa0a9; }
+
+.light .hover\:bg-dark-800:hover { background-color: rgb(230 230 235); }
+.light .hover\:bg-dark-700:hover { background-color: rgb(210 210 215); }
+.light .hover\:text-dark-300:hover { color: #3f3f47; }
+.light .hover\:text-dark-400:hover { color: #4d4d57; }
+
+.light .focus\:border-brand-500:focus { border-color: #29a7ff; }
+.light .focus\:outline-none:focus { outline: none; }
+
+.light .divide-dark-700 > :not([hidden]) ~ :not([hidden]) { border-color: rgb(210 210 215); }
+
+.light ::-webkit-scrollbar-track { background: rgb(245 245 248); }
+.light ::-webkit-scrollbar-thumb { background: rgb(196 197 203); }
+.light ::-webkit-scrollbar-thumb:hover { background: rgb(159 160 169); }
+
+.light input, .light textarea, .light select {
+  color: #101014;
+}
+
+.light code, .light pre {
+  background-color: rgb(230 230 235);
+  color: #101014;
+}
+
+/* Brand colors stay the same in both themes */
+.light .bg-brand-600 { background-color: #0d8bf5; }
+.light .bg-brand-600\/20 { background-color: rgba(13, 139, 245, 0.2); }
+.light .text-brand-400 { color: #51c5ff; }
+.light .text-brand-500 { color: #29a7ff; }
+.light .hover\:bg-brand-500:hover { background-color: #29a7ff; }
+.light .hover\:bg-brand-600\/30:hover { background-color: rgba(13, 139, 245, 0.3); }
+
+/* Status colors */
+.light .bg-green-900\/30 { background-color: rgba(34, 197, 94, 0.15); }
+.light .text-green-400 { color: #16a34a; }
+.light .bg-red-900\/30 { background-color: rgba(239, 68, 68, 0.15); }
+.light .text-red-400 { color: #dc2626; }
+.light .bg-yellow-900\/30 { background-color: rgba(234, 179, 8, 0.15); }
+.light .text-yellow-400 { color: #ca8a04; }
+.light .bg-purple-900\/30 { background-color: rgba(168, 85, 247, 0.15); }
+.light .text-purple-400 { color: #9333ea; }
