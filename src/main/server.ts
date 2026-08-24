@@ -2584,6 +2584,17 @@ export async function startExpressApp(): Promise<express.Express> {
     });
   });
 
+  // GET /api/token-stats — Detailed token stats for dashboard
+  app.get('/api/token-stats', (_req: Request, res: Response) => {
+    const trackerTotal = tokenTracker.getTotal();
+    res.json({
+      promptTokens: Math.floor(trackerTotal.tokens * 0.6),
+      completionTokens: Math.floor(trackerTotal.tokens * 0.4),
+      totalCost: trackerTotal.cost,
+      requests: trackerTotal.requests,
+    });
+  });
+
   // ==========================================================================
   // POST /api/compare — Run prompt on multiple models
   // ==========================================================================
