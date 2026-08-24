@@ -21,6 +21,7 @@ export type AgentEventType =
   | 'tool_start' | 'tool_complete'
   | 'llm_call' | 'llm_response'
   | 'context_compression'
+  | 'thinking_delta'
   | 'error'
   | 'token_usage'
   | 'message';

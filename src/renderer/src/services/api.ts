@@ -85,6 +85,7 @@ export interface TodoItem {
 
 export interface StreamCallbacks {
   onToken?: (content: string) => void;
+  onThinking?: (content: string) => void;
   onToolStart?: (tool: string, args: any, iteration: number) => void;
   onToolComplete?: (tool: string, success: boolean, outputPreview: string, iteration: number, diff?: any, durationMs?: number) => void;
   onIterationStart?: (iteration: number, maxIterations: number) => void;
@@ -147,6 +148,7 @@ export function sendAgentMessageStream(
               switch (currentEvent) {
                 case 'token_delta':
                 case 'token_stream': callbacks?.onToken?.(data.content); break;
+                case 'thinking_delta': callbacks?.onThinking?.(data.content); break;
                 case 'tool_start': callbacks?.onToolStart?.(data.tool, data.args, data.iteration); break;
                 case 'tool_complete': callbacks?.onToolComplete?.(data.tool, data.success, data.outputPreview, data.iteration, data.diff, data.duration_ms); break;
                 case 'iteration_start': callbacks?.onIterationStart?.(data.iteration, data.maxIterations); break;

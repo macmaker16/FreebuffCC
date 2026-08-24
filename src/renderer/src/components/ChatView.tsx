@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Bot, User, Trash2, AlertCircle, FolderOpen, Folder, Check, Wifi, WifiOff, MessageSquare, Search, Clock, Coins, ChevronDown, ChevronRight, X, Copy, CheckCheck, Terminal, FileCode, Zap, History, PanelRight, Square, Circle, CheckCircle2, ListTodo } from 'lucide-react';
+import { Send, Bot, User, Trash2, AlertCircle, FolderOpen, Folder, Check, Wifi, WifiOff, MessageSquare, Search, Clock, Coins, ChevronDown, ChevronRight, X, Copy, CheckCheck, Terminal, FileCode, Zap, History, PanelRight, Square, Circle, CheckCircle2, ListTodo, Brain } from 'lucide-react';
 import { Model, ModelStatus, ChatMessage } from '../types';
 import { sendAgentMessage, sendAgentMessageStream, generateId, fetchConversations, getConversation, deleteConversation, searchConversations, ConversationSummary, detectProject, getStats, abortAgentRun, TodoItem } from '../services/api';
 import TerminalPanel from './TerminalPanel';
@@ -24,6 +24,32 @@ interface Props {
 }
 
 type ViewMode = 'chat' | 'sessions' | 'help' | 'project';
+
+function ThinkingBlock({ thinking }: { thinking: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = thinking.length > 120 ? thinking.substring(0, 120) + '...' : thinking;
+  return (
+    <div className="mb-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-[10px] text-purple-400 hover:text-purple-300 transition-colors"
+      >
+        <Brain size={10} className={expanded ? 'text-purple-400' : 'text-purple-500'} />
+        <span className="font-medium">{expanded ? 'Thinking' : 'Thinking...'}</span>
+        <span className="text-dark-600">({thinking.length} chars)</span>
+        <span className="text-dark-600">{expanded ? '▼' : '▶'}</span>
+      </button>
+      {expanded && (
+        <div className="mt-1 p-2 rounded bg-purple-900/20 border border-purple-800/30 text-[10px] text-dark-300 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
+          {thinking}
+        </div>
+      )}
+      {!expanded && thinking.length > 120 && (
+        <p className="text-[10px] text-dark-500 mt-0.5 pl-4">{preview}</p>
+      )}
+    </div>
+  );
+}
 
 export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -49,6 +75,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
   const [lastDiff, setLastDiff] = useState<any>(null);
   const [contextPanelWidth, setContextPanelWidth] = useState(380);
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [streamingThinking, setStreamingThinking] = useState('');
   const sessionIdRef = useRef<string | null>(null);
   const streamAbortRef = useRef<(() => void) | null>(null);
   const isDragging = useRef(false);
@@ -138,6 +165,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
       // Add a placeholder assistant message that we'll stream into
       const assistantId = generateId();
       setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: '', timestamp: Date.now() }]);
+      setStreamingThinking('');
 
       let streamedContent = '';
       streamAbortRef.current = null;
@@ -148,6 +176,9 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
           onToken: (token) => {
             streamedContent += token;
             setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: streamedContent } : m));
+          },
+          onThinking: (token) => {
+            setStreamingThinking(prev => prev + token);
           },
           onSession: (info) => {
             sessionIdRef.current = info.sessionId || null;
@@ -201,6 +232,13 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: `Error: ${msg}` } : m));
           },
           onDone: () => {
+            // Save thinking to the message if present
+            setStreamingThinking(prev => {
+              if (prev) {
+                setMessages(msgs => msgs.map(m => m.id === assistantId ? { ...m, thinking: prev } : m));
+              }
+              return '';
+            });
             setLoading(false);
             setToolActivity([]);
           },
@@ -718,6 +756,9 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                     </div>
                   )}
                   <div className={`max-w-[80%] rounded-lg px-3 py-2 relative ${msg.role === 'user' ? 'bg-brand-600 text-white' : 'bg-dark-800 text-dark-100'}`}>
+                    {msg.thinking && msg.role === 'assistant' && (
+                      <ThinkingBlock thinking={msg.thinking} />
+                    )}
                     <p className="whitespace-pre-wrap text-xs leading-relaxed">{msg.content}</p>
                     {msg.role === 'assistant' && (
                       <button onClick={() => copyMessage(msg.content, idx)}
@@ -743,11 +784,25 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                       <Zap size={10} className="text-brand-400 animate-pulse" />
                       Agent working... <span className="text-dark-600">(Esc to stop)</span>
                     </p>
-                    <div className="flex gap-0.5">
-                      <div className="w-1.5 h-1.5 bg-brand-400 rounded-full typing-dot" />
-                      <div className="w-1.5 h-1.5 bg-brand-400 rounded-full typing-dot" />
-                      <div className="w-1.5 h-1.5 bg-brand-400 rounded-full typing-dot" />
-                    </div>
+                    {streamingThinking && (
+                      <div className="mb-1.5">
+                        <div className="flex items-center gap-1.5 text-[10px] text-purple-400 mb-1">
+                          <Brain size={10} className="animate-pulse" />
+                          <span className="font-medium">Thinking...</span>
+                        </div>
+                        <div className="p-1.5 rounded bg-purple-900/20 border border-purple-800/30 text-[10px] text-dark-300 whitespace-pre-wrap max-h-24 overflow-y-auto leading-relaxed">
+                          {streamingThinking.length > 300 ? streamingThinking.substring(streamingThinking.length - 300) : streamingThinking}
+                          <span className="animate-pulse text-purple-400">|</span>
+                        </div>
+                      </div>
+                    )}
+                    {!streamingThinking && (
+                      <div className="flex gap-0.5">
+                        <div className="w-1.5 h-1.5 bg-brand-400 rounded-full typing-dot" />
+                        <div className="w-1.5 h-1.5 bg-brand-400 rounded-full typing-dot" />
+                        <div className="w-1.5 h-1.5 bg-brand-400 rounded-full typing-dot" />
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

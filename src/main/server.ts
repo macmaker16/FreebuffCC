@@ -1000,6 +1000,7 @@ function parseToolCallsFromText(content: string): ToolCall[] {
 
 interface StreamCallbacks {
   onToken?: (token: string) => void;
+  onThinking?: (token: string) => void;
   onToolCall?: (toolCall: ToolCall) => void;
   onComplete?: (usage: { prompt: number; completion: number }) => void;
 }
@@ -1007,7 +1008,7 @@ interface StreamCallbacks {
 async function callLLMStream(
   baseUrl: string, apiKey: string, authPrefix: string, model: string,
   messages: ChatMessage[], tools: any[] | undefined, callbacks: StreamCallbacks, signal?: AbortSignal,
-): Promise<{ content: string; toolCalls: ToolCall[]; usage: { prompt: number; completion: number } }> {
+): Promise<{ content: string; reasoning: string; toolCalls: ToolCall[]; usage: { prompt: number; completion: number } }> {
   const body: any = { model, messages, max_tokens: 4096, temperature: 0.3, stream: true };
   if (tools && tools.length > 0) { body.tools = tools; }
   // Enable parallel tool calls for providers that support it (not NIM Llama)
@@ -1022,6 +1023,7 @@ async function callLLMStream(
   signal?.addEventListener('abort', onExternalAbort, { once: true });
 
   let fullContent = '';
+  let fullReasoning = '';
   const toolCallsMap: Record<number, { id: string; name: string; arguments: string }> = {};
   let usage = { prompt: 0, completion: 0 };
 
@@ -1067,6 +1069,13 @@ async function callLLMStream(
             callbacks.onToken?.(delta.content);
           }
 
+          // Reasoning/thinking tokens (OpenRouter, Qwen, etc.)
+          if (delta?.reasoning_content || delta?.reasoning) {
+            const reasoning = delta.reasoning_content || delta.reasoning;
+            fullReasoning += reasoning;
+            callbacks.onThinking?.(reasoning);
+          }
+
           // Tool calls (streamed in chunks)
           if (delta?.tool_calls) {
             for (const tc of delta.tool_calls) {
@@ -1104,7 +1113,7 @@ async function callLLMStream(
     }
 
     callbacks.onComplete?.(usage);
-    return { content: fullContent, toolCalls, usage };
+    return { content: fullContent, reasoning: fullReasoning, toolCalls, usage };
   } catch (err: any) {
     clearTimeout(timeout);
     throw err;
@@ -1165,6 +1174,7 @@ async function runStreamingAgent(
     try {
       result = await callLLMStream(baseUrl, apiKey, authPrefix, model, messages, TOOL_DEFINITIONS, {
         onToken: (token) => sendEvent('token_delta', { content: token, iteration: iterations }),
+        onThinking: (token) => sendEvent('thinking_delta', { content: token, iteration: iterations }),
         onComplete: (u) => { usage = u; },
       }, signal);
     } catch (err: any) {
