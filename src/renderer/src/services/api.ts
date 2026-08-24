@@ -97,6 +97,7 @@ export interface StreamCallbacks {
   /** Fired whenever the agent updates its todo checklist */
   onTodos?: (todos: TodoItem[]) => void;
   onError?: (message: string) => void;
+  onSessionDiffs?: (diffs: any) => void;
   onDone?: () => void;
 }
 
@@ -155,6 +156,7 @@ export function sendAgentMessageStream(
                 case 'phase_change': callbacks?.onPhaseChange?.(data.phase, data.iteration); break;
                 case 'token_usage': callbacks?.onTokenUsage?.(data.prompt, data.completion, data.totalPrompt, data.totalCompletion); break;
                 case 'session': callbacks?.onSession?.(data); break;
+                case 'session_diffs': callbacks?.onSessionDiffs?.(data); break;
                 case 'todos_updated': callbacks?.onTodos?.(data.todos || []); break;
                 case 'agent_end':
                   if (Array.isArray(data.todos)) callbacks?.onTodos?.(data.todos);

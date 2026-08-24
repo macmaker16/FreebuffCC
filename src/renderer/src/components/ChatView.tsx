@@ -128,6 +128,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
   const [contextPanelTab, setContextPanelTab] = useState<'terminal' | 'diff' | 'files'>('terminal');
   const [fileTree, setFileTree] = useState<string[]>([]);
   const [lastDiff, setLastDiff] = useState<any>(null);
+  const [sessionDiffs, setSessionDiffs] = useState<any[]>([]);
   const [contextPanelWidth, setContextPanelWidth] = useState(380);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [streamingThinking, setStreamingThinking] = useState('');
@@ -316,6 +317,12 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
           onError: (msg) => {
             setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: `Error: ${msg}` } : m));
           },
+          onSessionDiffs: (diffs) => {
+            if (diffs?.diffs) {
+              setSessionDiffs(diffs.diffs);
+              setContextPanelTab('diff');
+            }
+          },
           onDone: () => {
             // Save thinking to the message if present
             setStreamingThinking(prev => {
@@ -413,6 +420,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
         setActiveConversationId(null);
         sessionIdRef.current = null;
         setTodos([]);
+        setSessionDiffs([]);
         return { handled: true };
 
       case '/cost':
@@ -754,7 +762,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                 {workspaceSaved ? <Check size={8} className="text-green-400" /> : <FolderOpen size={8} />}
               </button>
             </div>
-            <button onClick={() => { setMessages([]); setActiveConversationId(null); sessionIdRef.current = null; setTodos([]); }} disabled={messages.length === 0}
+            <button onClick={() => { setMessages([]); setActiveConversationId(null); sessionIdRef.current = null; setTodos([]); setSessionDiffs([]); }} disabled={messages.length === 0}
               className="p-1.5 hover:bg-dark-800 rounded transition-colors text-dark-500 hover:text-white disabled:opacity-30 ml-1" title="New Chat">
               <Trash2 size={12} />
             </button>
@@ -1034,7 +1042,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                 </button>
                 <button onClick={() => setContextPanelTab('diff')}
                   className={`px-2 py-0.5 text-[12px] rounded font-medium transition-colors ${contextPanelTab === 'diff' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
-                  <FileCode size={10} className="inline mr-1" />Diff
+                  <FileCode size={10} className="inline mr-1" />Diff{sessionDiffs.length > 0 ? ` (${sessionDiffs.length})` : ''}
                 </button>
                 <button onClick={() => { setContextPanelTab('files'); if (fileTree.length === 0) fetchFiles(); }}
                   className={`px-2 py-0.5 text-[12px] rounded font-medium transition-colors ${contextPanelTab === 'files' ? 'bg-brand-600/20 text-brand-400' : 'text-dark-500 hover:text-white'}`}>
@@ -1050,7 +1058,11 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
               {contextPanelTab === 'terminal' ? (
                 <TerminalPanel toolEvents={toolEvents} iteration={currentIteration} maxIterations={20} isRunning={loading} />
               ) : contextPanelTab === 'diff' ? (
-                lastDiff ? <DiffViewer diff={lastDiff} /> : (
+                sessionDiffs.length > 0 ? (
+                  <div className="h-full overflow-y-auto p-2 space-y-2">
+                    {sessionDiffs.map((d, i) => <DiffViewer key={i} diff={d} />)}
+                  </div>
+                ) : lastDiff ? <DiffViewer diff={lastDiff} /> : (
                   <div className="flex flex-col items-center justify-center h-full text-dark-500">
                     <FileCode size={24} className="mb-2 opacity-30" />
                     <p className="text-[12px]">No diffs yet</p>

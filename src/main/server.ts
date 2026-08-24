@@ -27,6 +27,7 @@ import { CascadingPlanner } from './agent/planner';
 import { OutputInterceptor } from './agent/output-interceptor';
 import { ContextCompressionEngine } from './agent/context-compression';
 import { getRepoMapGenerator } from './agent/repo-map';
+import { SessionFileTracker } from './agent/session-file-tracker';
 import { exec } from 'child_process';
 import { getPluginRegistry } from './agent/plugins/registry';
 import { readFile, writeFile, mkdir, access } from 'fs/promises';
@@ -89,6 +90,7 @@ let conversationStore: ConversationStore;
 let slashHandler: SlashCommandHandler;
 let tokenTracker: TokenTracker;
 let projectDetector: ProjectDetector;
+let sessionFileTracker: SessionFileTracker;
 
 function getWorkspaceDir(): string {
   const stored = store.get('workspace');
@@ -396,6 +398,8 @@ async function executeWriteFile(args: { file_path: string; content: string }): P
     const fullPath = resolvePath(args.file_path);
     await mkdir(dirname(fullPath), { recursive: true });
     await writeFile(fullPath, args.content, 'utf-8');
+    // Track this change for /diff
+    sessionFileTracker.trackWrite(args.file_path, args.content);
     return `SUCCESS: Wrote ${args.content.split('\n').length} lines (${Buffer.byteLength(args.content)} bytes) to ${args.file_path}`;
   } catch (err: any) { return `ERROR writing file: ${err.message}`; }
 }
@@ -416,6 +420,8 @@ async function executeEditFile(args: { file_path: string; old_string: string; ne
     }
     const newContent = currentContent.replace(args.old_string, args.new_string);
     await writeFile(fullPath, newContent, 'utf-8');
+    // Track this change for /diff
+    sessionFileTracker.trackEdit(args.file_path, currentContent, newContent);
     // Generate structured diff for the DiffViewer
     const diff = generateDiff(args.file_path, currentContent, newContent);
     return {
@@ -1967,6 +1973,8 @@ export async function startExpressApp(): Promise<express.Express> {
   slashHandler = new SlashCommandHandler(conversationStore, getWorkspaceDir());
   tokenTracker = new TokenTracker();
   projectDetector = new ProjectDetector(getWorkspaceDir());
+  sessionFileTracker = new SessionFileTracker(getWorkspaceDir());
+  slashHandler.setFileTracker(sessionFileTracker);
 
   const app = express();
   app.use(express.json({ limit: '10mb' }));
@@ -2136,6 +2144,7 @@ export async function startExpressApp(): Promise<express.Express> {
       if (result.meta) {
         // Meta command — handle locally
         if (result.action === 'clear') {
+          sessionFileTracker.clear();
           return res.json({ choices: [{ message: { role: 'assistant', content: result.response }, finish_reason: 'stop' }], slash_command: true, action: 'clear' });
         }
         if (result.action === 'load_session') {
@@ -2144,7 +2153,7 @@ export async function startExpressApp(): Promise<express.Express> {
             return res.json({ choices: [{ message: { role: 'assistant', content: result.response }, finish_reason: 'stop' }], slash_command: true, action: 'load_session', conversation: conv });
           }
         }
-        return res.json({ choices: [{ message: { role: 'assistant', content: result.response }, finish_reason: 'stop' }], slash_command: true });
+        return res.json({ choices: [{ message: { role: 'assistant', content: result.response }, finish_reason: 'stop' }], slash_command: true, ...(result.payload ? { session_diffs: result.payload } : {}) });
       }
       // Non-meta command — forward to agent with modified message
       messages[messages.length - 1] = { role: 'user', content: result.response };
@@ -2284,6 +2293,7 @@ export async function startExpressApp(): Promise<express.Express> {
             return;
           }
           sendEvent('token_delta', { content: result.response, iteration: 0 });
+          if (result.payload) sendEvent('session_diffs', result.payload);
           sendEvent('done', {});
           finishRun();
           res.write('', () => { res.end(); });

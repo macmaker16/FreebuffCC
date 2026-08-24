@@ -89,6 +89,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/coderabbit', description: 'Run CodeRabbit AI code review on current changes', usage: '/coderabbit [file-or-dir]', category: 'agent' },
   { name: '/audit', description: 'Full site audit: crawl links, check imports, find issues', usage: '/audit <url>', category: 'agent' },
   { name: '/skills', description: 'List available skills or run a skill', usage: '/skills [skill-name]', category: 'agent' },
+  { name: '/diff', description: 'Show visual side-by-side diff of all files changed this session', usage: '/diff', category: 'session' },
 
   // Info
   { name: '/help', description: 'Show all available commands', usage: '/help', category: 'info' },
@@ -103,6 +104,7 @@ export class SlashCommandHandler {
   private workspace: string;
   private currentModel: string = '';
   private currentProvider: string = '';
+  private fileTracker: any = null; // SessionFileTracker (lazy import to avoid circular)
 
   constructor(conversationStore: ConversationStore, workspace: string) {
     this.conversationStore = conversationStore;
@@ -112,6 +114,10 @@ export class SlashCommandHandler {
   setModel(model: string, provider: string): void {
     this.currentModel = model;
     this.currentProvider = provider;
+  }
+
+  setFileTracker(tracker: any): void {
+    this.fileTracker = tracker;
   }
 
   /** Check if input is a slash command */
@@ -162,6 +168,7 @@ export class SlashCommandHandler {
       case '/coderabbit': return this.cmdCoderabbit(args);
       case '/audit': return this.cmdAudit(args);
       case '/skills': return this.cmdSkills(args);
+      case '/diff': return this.cmdDiff();
       default:
         return {
           response: `Unknown command: ${command}\nType /help to see available commands.`,
@@ -790,6 +797,32 @@ export class SlashCommandHandler {
     return {
       response: `[SKILL: ${skill.name}]\n${skill.description}\n\nExecuting skill workflow...`,
       meta: false,
+    };
+  }
+
+  // ==========================================================================
+  // /diff — Show session diff of all changed files
+  // ==========================================================================
+
+  private cmdDiff(): SlashCommandResult {
+    if (!this.fileTracker) {
+      return { response: 'File tracker not initialized.', meta: true };
+    }
+
+    const diffText = this.fileTracker.getSessionDiffText();
+    const fileCount = this.fileTracker.getChangedFileCount();
+    const structuredDiffs = this.fileTracker.getSessionDiffsStructured();
+
+    // Return both the text representation and structured diffs
+    // The frontend will render the structured diffs as visual side-by-side views
+    return {
+      response: diffText,
+      meta: true,
+      payload: {
+        type: 'session_diff',
+        fileCount,
+        diffs: structuredDiffs,
+      },
     };
   }
 }
