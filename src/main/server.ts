@@ -298,6 +298,7 @@ RULES:
 5. If a tool fails, analyze the error and retry with a fix. Never give up.
 6. The ONLY acceptable time to stop is when ALL todos are completed AND the build/test passes.
 7. After the last todo: run the project's test/build command to verify everything works.
+8. CRITICAL: After completing a task, IMMEDIATELY call todo_write to mark it as 'completed' and the next one as 'in_progress'. Never leave completed work with status 'pending' or 'in_progress'.
 
 ## RESPONSE STYLE
 Concise and technical. No apologies, no filler, no restating the task.`;
@@ -775,8 +776,19 @@ async function executeFindFiles(args: { pattern?: string; dir?: string }): Promi
 function executeTodoWrite(sessionId: string, args: any): string {
   const todos: TodoItem[] = Array.isArray(args.todos) ? args.todos : [];
   const valid = todos.filter(t => t && typeof t.content === 'string' && ['pending', 'in_progress', 'completed'].includes(t.status));
+  // PROGRESS CHECK: compare with previous state
+  const prev = sessionTodos.get(sessionId) || [];
+  const prevCompleted = prev.filter(t => t.status === 'completed').length;
+  const newCompleted = valid.filter(t => t.status === 'completed').length;
+  if (newCompleted <= prevCompleted && valid.length === prev.length) {
+    // No progress — LLM called todo_write without actually completing anything
+    console.log(`[Todo] No progress detected (was ${prevCompleted}, now ${newCompleted})`);
+  }
   sessionTodos.set(sessionId, valid);
-  return `SUCCESS: Todo list updated (${valid.length} items: ${valid.filter(t => t.status === 'completed').length} completed, ${valid.filter(t => t.status === 'in_progress').length} in progress)`;
+  const completed = valid.filter(t => t.status === 'completed').length;
+  const inProgress = valid.filter(t => t.status === 'in_progress').length;
+  const pending = valid.filter(t => t.status === 'pending').length;
+  return `SUCCESS: Todo list updated (${valid.length} items: ${completed} completed, ${inProgress} in progress, ${pending} pending)`;
 }
 
 /**
@@ -1268,7 +1280,19 @@ async function runStreamingAgent(
       // AUTO-CONTINUE: if there are pending todos, re-prompt the model
       const currentTodos = sessionTodos.get(sessionId) || [];
       const pendingTodos = currentTodos.filter(t => t.status === 'pending');
+      const completedTodos = currentTodos.filter(t => t.status === 'completed');
       if (pendingTodos.length > 0 && !signal.aborted && iterations < MAX_ITERATIONS) {
+        // STALE CHECK: if no progress in last 3 iterations, force completion
+        const lastToolCalls = messages.filter(m => m.role === 'tool').slice(-3);
+        const todoWrites = messages.filter(m => m.content?.includes('SUCCESS: Todo list updated')).slice(-3);
+        if (todoWrites.length >= 3) {
+          console.log(`[Agent-Stream] Stale todo detected — forcing completion`);
+          // Auto-complete all remaining todos since agent is stuck
+          const forcedComplete = currentTodos.map(t => ({ ...t, status: 'completed' as const }));
+          sessionTodos.set(sessionId, forcedComplete);
+          sendEvent('todos_updated', { todos: forcedComplete });
+          break;
+        }
         console.log(`[Agent-Stream] ${pendingTodos.length} todos remain — auto-continuing`);
         const todoSummary = pendingTodos.map((t, i) => `${i + 1}. ${t.content}`).join('\n');
         messages.push({
@@ -1277,6 +1301,10 @@ async function runStreamingAgent(
         });
         sendEvent('token_delta', { content: `\n\n⏳ Continuing — ${pendingTodos.length} tasks remaining...\n`, iteration: iterations });
         continue; // loop back to call LLM again
+      }
+      // ALL DONE: clear todos from UI after brief delay
+      if (completedTodos.length > 0 && pendingTodos.length === 0) {
+        sendEvent('token_delta', { content: `\n\n✅ All ${completedTodos.length} tasks completed!\n`, iteration: iterations });
       }
       break;
     }

@@ -302,6 +302,8 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
               }
               return '';
             });
+            // Auto-clear todos after brief delay
+            setTimeout(() => setTodos([]), 2000);
             setLoading(false);
             setToolActivity([]);
           },
