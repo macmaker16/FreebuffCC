@@ -91,6 +91,14 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
     // Listen for permission requests
     window.electronAPI.onPermissionRequest((request) => {
       setPendingPermission(request);
+      // Also show as a chat message
+      setMessages(prev => [...prev, {
+        id: `perm_${request.id}`,
+        role: 'assistant' as const,
+        content: '',
+        permissionRequest: request,
+        timestamp: Date.now(),
+      }]);
     });
     // Load last active conversation on boot
     fetchConversations().then(convs => {
@@ -755,18 +763,49 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                       <Bot size={11} className="text-brand-400" />
                     </div>
                   )}
-                  <div className={`max-w-[80%] rounded-lg px-3 py-2 relative ${msg.role === 'user' ? 'bg-brand-600 text-white' : 'bg-dark-800 text-dark-100'}`}>
-                    {msg.thinking && msg.role === 'assistant' && (
-                      <ThinkingBlock thinking={msg.thinking} />
-                    )}
-                    <p className="whitespace-pre-wrap text-xs leading-relaxed">{msg.content}</p>
-                    {msg.role === 'assistant' && (
-                      <button onClick={() => copyMessage(msg.content, idx)}
-                        className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-dark-700">
-                        {copiedIdx === idx ? <CheckCheck size={10} className="text-green-400" /> : <Copy size={10} className="text-dark-500" />}
-                      </button>
-                    )}
-                  </div>
+                  {msg.permissionRequest ? (
+                    /* Permission request — inline card with approve/deny buttons */
+                    <div className="max-w-[80%] rounded-lg px-3 py-2 bg-orange-500/10 border border-orange-500/30">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <AlertCircle size={12} className="text-orange-400" />
+                        <span className="text-[11px] font-medium text-orange-300">Permission Required</span>
+                      </div>
+                      <p className="text-[10px] text-dark-300 mb-2">{msg.permissionRequest.description}</p>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={async () => {
+                          await handlePermission('approve', true);
+                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: '✅ Always allowed', permissionRequest: undefined } : m));
+                        }} className="px-2 py-1 bg-green-600 hover:bg-green-700 rounded text-[10px] text-white font-medium transition-colors">
+                          Always Allow
+                        </button>
+                        <button onClick={async () => {
+                          await handlePermission('approve');
+                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: '✅ Allowed', permissionRequest: undefined } : m));
+                        }} className="px-2 py-1 bg-brand-600 hover:bg-brand-700 rounded text-[10px] text-white font-medium transition-colors">
+                          Allow
+                        </button>
+                        <button onClick={async () => {
+                          await handlePermission('deny');
+                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: '❌ Denied', permissionRequest: undefined } : m));
+                        }} className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-[10px] text-white font-medium transition-colors">
+                          Deny
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={`max-w-[80%] rounded-lg px-3 py-2 relative ${msg.role === 'user' ? 'bg-brand-600 text-white' : 'bg-dark-800 text-dark-100'}`}>
+                      {msg.thinking && msg.role === 'assistant' && (
+                        <ThinkingBlock thinking={msg.thinking} />
+                      )}
+                      <p className="whitespace-pre-wrap text-xs leading-relaxed">{msg.content}</p>
+                      {msg.role === 'assistant' && (
+                        <button onClick={() => copyMessage(msg.content, idx)}
+                          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-dark-700">
+                          {copiedIdx === idx ? <CheckCheck size={10} className="text-green-400" /> : <Copy size={10} className="text-dark-500" />}
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {msg.role === 'user' && (
                     <div className="w-5 h-5 rounded bg-dark-700 flex items-center justify-center flex-shrink-0 mt-0.5">
                       <User size={11} />

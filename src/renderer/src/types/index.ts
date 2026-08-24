@@ -33,6 +33,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   thinking?: string;
+  permissionRequest?: { id: string; description: string; type: string };
   timestamp: number;
 }
 
