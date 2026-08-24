@@ -328,7 +328,15 @@ function getSystemPrompt(projectContext: string = '', projectInfo?: any, repoMap
   dynamic = dynamic.replace('{{REPO_MAP}}', repoMap
     ? `\n### Repo Map (PageRank-ranked, bodies elided with ⋮)\n${repoMap}\n` : '');
   dynamic = dynamic.replace('{{PROJECT_CONTEXT}}', projectContext ? '\n' + projectContext : '');
-  return SYSTEM_PROMPT_STATIC + dynamic;
+  // Load custom persona if set
+  let persona = '';
+  try {
+    const personaFile = require('path').join(workspace, '.michaelangelo', 'persona.txt');
+    if (require('fs').existsSync(personaFile)) {
+      persona = '\n### Custom Persona\n' + require('fs').readFileSync(personaFile, 'utf-8') + '\n';
+    }
+  } catch { /* no persona */ }
+  return SYSTEM_PROMPT_STATIC + persona + dynamic;
 }
 
 // ============================================================================
@@ -342,6 +350,26 @@ function resolvePath(filePath: string): string {
 
 function isPathSafe(filePath: string): boolean {
   return resolvePath(filePath).startsWith(resolve(getWorkspaceDir()));
+}
+
+// Auto-format file after write/edit (best-effort, non-blocking)
+async function autoFormatFile(filePath: string): Promise<void> {
+  try {
+    const fullPath = resolvePath(filePath);
+    const ext = fullPath.split('.').pop()?.toLowerCase() || '';
+    const ws = getWorkspaceDir();
+    // Try prettier for JS/TS/CSS/HTML
+    if (['js', 'jsx', 'ts', 'tsx', 'css', 'html', 'json', 'md'].includes(ext)) {
+      const prettierPath = require('path').join(ws, 'node_modules/.bin/prettier');
+      if (require('fs').existsSync(prettierPath)) {
+        await execAsync(`"${prettierPath}" --write "${fullPath}"`, { cwd: ws, timeout: 10000 });
+      }
+    }
+    // Try black for Python
+    if (ext === 'py') {
+      await execAsync(`python3 -m black "${fullPath}" 2>/dev/null || true`, { cwd: ws, timeout: 10000 });
+    }
+  } catch { /* auto-format is best-effort */ }
 }
 
 async function executeWriteFile(args: { file_path: string; content: string }): Promise<string> {
@@ -796,8 +824,18 @@ async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
   let args: any;
   try { args = JSON.parse(toolCall.function.arguments); } catch { return { output: `ERROR: Failed to parse tool arguments` }; }
   switch (toolCall.function.name) {
-    case 'write_file': return { output: await executeWriteFile(args) };
-    case 'edit_file': return await executeEditFile(args);
+    case 'write_file': {
+      const result = await executeWriteFile(args);
+      // Auto-format after write
+      autoFormatFile(args.file_path).catch(() => {});
+      return { output: result };
+    }
+    case 'edit_file': {
+      const result = await executeEditFile(args);
+      // Auto-format after edit
+      autoFormatFile(args.file_path).catch(() => {});
+      return result;
+    }
     case 'read_file': return { output: await executeReadFile(args) };
     case 'run_command': return { output: await executeRunCommand(args) };
     case 'list_files': return { output: await executeListFiles(args) };
@@ -2138,6 +2176,35 @@ export async function startExpressApp(): Promise<express.Express> {
       tokens: trackerTotal,
       conversations: convStats,
     });
+  });
+
+  // ==========================================================================
+  // POST /api/compare — Run prompt on multiple models
+  // ==========================================================================
+  app.post('/api/compare', async (req: Request, res: Response) => {
+    const { prompt, models: modelList } = req.body;
+    if (!prompt || !modelList || !Array.isArray(modelList)) return res.status(400).json({ error: 'prompt and models array required' });
+    const results: Array<{ model: string; response: string; time_ms: number; tokens: number }> = [];
+    await Promise.allSettled(modelList.map(async (m: any) => {
+      const pk = (m.provider && PROVIDERS[m.provider]) ? m.provider : detectProvider(m.id);
+      const provider = PROVIDERS[pk];
+      const apiKey = provider.getApiKey();
+      if (!apiKey) { results.push({ model: m.id, response: `No API key for ${pk}`, time_ms: 0, tokens: 0 }); return; }
+      const start = Date.now();
+      try {
+        const c = new AbortController(); const t = setTimeout(() => c.abort(), 60000);
+        const r = await fetch(`${getBaseUrl(provider)}/chat/completions`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `${provider.authPrefix}${apiKey}` },
+          body: JSON.stringify({ model: m.id, messages: [{ role: 'user', content: prompt }], max_tokens: 2048, temperature: 0.3 }),
+          signal: c.signal,
+        });
+        clearTimeout(t);
+        const data = await r.json() as any;
+        results.push({ model: m.id, response: data.choices?.[0]?.message?.content || 'No response', time_ms: Date.now() - start, tokens: data.usage?.total_tokens || 0 });
+      } catch (err: any) { results.push({ model: m.id, response: `Error: ${err.message}`, time_ms: Date.now() - start, tokens: 0 }); }
+    }));
+    results.sort((a, b) => a.time_ms - b.time_ms);
+    res.json({ results });
   });
 
   // ==========================================================================

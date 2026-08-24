@@ -80,6 +80,12 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/branch', description: 'Create and switch to a new git branch', usage: '/branch <name>', category: 'agent' },
   { name: '/template', description: 'Scaffold a project from a template', usage: '/template <react|nextjs|express|python|vanilla>', category: 'agent' },
   { name: '/lang', description: 'Detect project language and set up tooling', usage: '/lang', category: 'project' },
+  { name: '/compare', description: 'Run same prompt on multiple models and compare', usage: '/compare <prompt>', category: 'agent' },
+  { name: '/explain', description: 'Explain code line by line', usage: '/explain <file>', category: 'agent' },
+  { name: '/deps', description: 'Analyze dependencies and find all usages of a symbol', usage: '/deps <function-or-import>', category: 'agent' },
+  { name: '/test-gen', description: 'Auto-generate tests for a file', usage: '/test-gen <file>', category: 'agent' },
+  { name: '/format', description: 'Auto-format all files with prettier/black', usage: '/format [file]', category: 'agent' },
+  { name: '/persona', description: 'Set custom system prompt for the agent', usage: '/persona <prompt>', category: 'project' },
 
   // Info
   { name: '/help', description: 'Show all available commands', usage: '/help', category: 'info' },
@@ -144,6 +150,12 @@ export class SlashCommandHandler {
       case '/branch': return this.cmdBranch(args);
       case '/template': return this.cmdTemplate(args);
       case '/lang': return this.cmdLang();
+      case '/compare': return this.cmdCompare(args);
+      case '/explain': return this.cmdExplain(args);
+      case '/deps': return this.cmdDeps(args);
+      case '/test-gen': return this.cmdTestGen(args);
+      case '/format': return this.cmdFormat(args);
+      case '/persona': return this.cmdPersona(args);
       default:
         return {
           response: `Unknown command: ${command}\nType /help to see available commands.`,
@@ -563,6 +575,101 @@ export class SlashCommandHandler {
     if (existsSync(join(ws, 'pom.xml')) || existsSync(join(ws, 'build.gradle'))) langs.push('Java');
     if (existsSync(join(ws, '*.csproj')) || existsSync(join(ws, '*.sln'))) langs.push('C#');
     return { response: langs.length > 0 ? `**Detected languages:**\n${langs.map(l => `- ${l}`).join('\n')}` : 'No programming language detected. Use /template to scaffold a project.', meta: true };
+  }
+
+  // ==========================================================================
+  // /compare — Run same prompt on multiple models
+  // ==========================================================================
+
+  private async cmdCompare(prompt: string): Promise<SlashCommandResult> {
+    if (!prompt) return { response: 'Usage: /compare <prompt>\nRuns the prompt on your active model and 2 alternatives.', meta: true };
+    // Forward to the agent as a special multi-model prompt
+    return { response: `[COMPARE MODE] Run this prompt on multiple models and show differences:\n${prompt}`, meta: false };
+  }
+
+  // ==========================================================================
+  // /explain — Line-by-line code explanation
+  // ==========================================================================
+
+  private async cmdExplain(file: string): Promise<SlashCommandResult> {
+    if (!file) return { response: 'Usage: /explain <file-path>', meta: true };
+    const fullPath = require('path').join(this.workspace, file);
+    try {
+      const content = require('fs').readFileSync(fullPath, 'utf-8');
+      const lines = content.split('\n');
+      const summary: string[] = [];
+      summary.push(`**File:** ${file} (${lines.length} lines)\n`);
+      // Extract key structures
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.match(/^(export\s+)?(async\s+)?function\s+(\w+)/)) summary.push(`L${i + 1}: ${line.substring(0, 80)}`);
+        else if (line.match(/^(export\s+)?class\s+(\w+)/)) summary.push(`L${i + 1}: ${line.substring(0, 80)}`);
+        else if (line.match(/^(export\s+)?(interface|type)\s+(\w+)/)) summary.push(`L${i + 1}: ${line.substring(0, 80)}`);
+        else if (line.match(/^import\s+/)) summary.push(`L${i + 1}: ${line.substring(0, 80)}`);
+      }
+      return { response: summary.join('\n') + '\n\nAsk the agent to explain specific sections in detail.', meta: true };
+    } catch { return { response: `File not found: ${file}`, meta: true }; }
+  }
+
+  // ==========================================================================
+  // /deps — Dependency analysis
+  // ==========================================================================
+
+  private async cmdDeps(symbol: string): Promise<SlashCommandResult> {
+    if (!symbol) return { response: 'Usage: /deps <function-or-import-name>', meta: true };
+    try {
+      const { stdout } = await execAsync(`grep -rn "${symbol}" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" . 2>/dev/null | grep -v node_modules | grep -v '.git/' | head -30`, { cwd: this.workspace, timeout: 15000, maxBuffer: 1024 * 1024 });
+      const matches = stdout.trim().split('\n').filter(l => l.trim());
+      if (matches.length === 0) return { response: `No references found for \"${symbol}\"`, meta: true };
+      return { response: `**References to \"${symbol}\" (${matches.length}):**\n\n${matches.map(m => `\`${m}\``).join('\n')}`, meta: true };
+    } catch { return { response: `Search failed for \"${symbol}\"`, meta: true }; }
+  }
+
+  // ==========================================================================
+  // /test-gen — Auto-generate tests
+  // ==========================================================================
+
+  private async cmdTestGen(file: string): Promise<SlashCommandResult> {
+    if (!file) return { response: 'Usage: /test-gen <file-to-test>', meta: true };
+    return { response: `[TEST GEN] Generate comprehensive unit tests for ${file}. Create the test file with: 1) Happy path tests, 2) Edge cases, 3) Error handling, 4) Boundary conditions.`, meta: false };
+  }
+
+  // ==========================================================================
+  // /format — Auto-format files
+  // ==========================================================================
+
+  private async cmdFormat(file: string): Promise<SlashCommandResult> {
+    const target = file || '.';
+    const { existsSync } = require('fs');
+    const ws = this.workspace;
+    // Try prettier first, then black for Python
+    if (existsSync(require('path').join(ws, '.prettierrc')) || existsSync(require('path').join(ws, 'prettier.config.js')) || existsSync(require('path').join(ws, 'node_modules/.bin/prettier'))) {
+      try {
+        const { stdout } = await execAsync(`npx prettier --write "${target}"`, { cwd: ws, timeout: 30000, maxBuffer: 2 * 1024 * 1024 });
+        return { response: `**Formatted with Prettier:**\n${stdout.substring(0, 500)}`, meta: true };
+      } catch (err: any) { return { response: `Prettier failed: ${err.message}`, meta: true }; }
+    }
+    if (existsSync(require('path').join(ws, 'requirements.txt')) || existsSync(require('path').join(ws, 'pyproject.toml'))) {
+      try {
+        const { stdout } = await execAsync(`python3 -m black "${target}" 2>/dev/null || black "${target}"`, { cwd: ws, timeout: 30000, maxBuffer: 2 * 1024 * 1024 });
+        return { response: `**Formatted with Black:**\n${stdout.substring(0, 500)}`, meta: true };
+      } catch (err: any) { return { response: `Black failed: ${err.message}`, meta: true }; }
+    }
+    return { response: 'No formatter found. Install prettier (npm) or black (pip).', meta: true };
+  }
+
+  // ==========================================================================
+  // /persona — Set custom system prompt
+  // ==========================================================================
+
+  private async cmdPersona(prompt: string): Promise<SlashCommandResult> {
+    if (!prompt) return { response: 'Usage: /persona <system prompt>\nSets a custom persona for the agent.', meta: true };
+    const personaFile = require('path').join(this.workspace, '.michaelangelo', 'persona.txt');
+    try {
+      await require('fs/promises').mkdir(require('path').join(this.workspace, '.michaelangelo'), { recursive: true });
+      await require('fs/promises').writeFile(personaFile, prompt, 'utf-8');
+      return { response: `**Persona saved!** The agent will use this custom system prompt in future sessions.\n\n> ${prompt.substring(0, 200)}`, meta: true };
+    } catch (err: any) { return { response: `Failed to save persona: ${err.message}`, meta: true }; }
   }
 }
 
