@@ -286,13 +286,17 @@ const SYSTEM_PROMPT_STATIC = `You are Michaelangelo, an expert AI coding agent: 
 - find_files — find files by name pattern (like the find command). Excludes node_modules, .git, dist.
 - dispatch_agent — spawn an isolated read-only sub-agent for independent research; merge its summary.
 
-## AGENTIC LOOP (CRITICAL)
-You are in an AUTONOMOUS LOOP. After each tool call completes, you MUST:
-1. Check the todo list — are there unfinished items? If yes, continue to the next one.
-2. Check if the user's original request is fully satisfied. If not, call another tool.
-3. ONLY respond with text when ALL tasks are complete.
-4. NEVER say "Done" or "Let me know if you need anything else" while todos remain pending.
-5. Chain tool calls: write_file → run_command → verify → next item. Do not stop between steps.
+## AGENTIC LOOP (CRITICAL — READ THIS BEFORE EVERY TOOL CALL)
+You are in an AUTONOMOUS LOOP. You MUST keep calling tools until the task is 100% complete.
+
+RULES:
+1. After EVERY tool call, check the todo list. If items are pending, IMMEDIATELY call the next tool.
+2. NEVER respond with plain text while todos remain pending. Always call a tool.
+3. NEVER say "Done", "Finished", "Let me know", or stop working while tasks remain.
+4. Chain your work: create file → install deps → run tests → fix errors → next file.
+5. If a tool fails, analyze the error and retry with a fix. Never give up.
+6. The ONLY acceptable time to stop is when ALL todos are completed AND the build/test passes.
+7. After the last todo: run the project's test/build command to verify everything works.
 
 ## RESPONSE STYLE
 Concise and technical. No apologies, no filler, no restating the task.`;
@@ -1176,6 +1180,15 @@ async function runStreamingAgent(
     sendEvent('iteration_start', { iteration: iterations, maxIterations: MAX_ITERATIONS });
     sendEvent('llm_call', { iteration: iterations, model, toolCount: TOOL_DEFINITIONS.length });
 
+    // Progress injection: remind the agent of remaining work every 3 iterations
+    const currentTodos = sessionTodos.get(sessionId) || [];
+    const pendingTodos = currentTodos.filter(t => t.status === 'pending');
+    const completedTodos = currentTodos.filter(t => t.status === 'completed');
+    if (iterations > 1 && iterations % 3 === 0 && pendingTodos.length > 0) {
+      const progressMsg = `[System Progress: ${completedTodos.length}/${currentTodos.length} tasks done. ${pendingTodos.length} remaining: ${pendingTodos.map(t => t.content).join('; ')}]`;
+      messages.push({ role: 'system', content: progressMsg });
+    }
+
     // Stream tokens to the client AS THEY ARRIVE (Claude Code-style live output)
     let usage = { prompt: 0, completion: 0 };
     let result;
@@ -1208,10 +1221,24 @@ async function runStreamingAgent(
       tool_calls: streamToolCalls.length > 0 ? streamToolCalls : undefined,
     });
 
-    // No tool calls — the agent is done
+    // No tool calls — check if we should auto-continue or exit
     if (streamToolCalls.length === 0 || signal.aborted) {
-      console.log(`[Agent-Stream] Completed after ${iterations} iterations. Tool calls: ${streamToolCalls.length}, Content length: ${streamContent.length}, Signal aborted: ${signal.aborted}`);
-      console.log(`[Agent-Stream] Last 200 chars of content: ${streamContent.substring(streamContent.length - 200)}`);
+      console.log(`[Agent-Stream] No tool calls. Iter: ${iterations}, Content len: ${streamContent.length}, Aborted: ${signal.aborted}`);
+      console.log(`[Agent-Stream] Last 200 chars: ${streamContent.substring(streamContent.length - 200)}`);
+
+      // AUTO-CONTINUE: if there are pending todos, re-prompt the model
+      const currentTodos = sessionTodos.get(sessionId) || [];
+      const pendingTodos = currentTodos.filter(t => t.status === 'pending');
+      if (pendingTodos.length > 0 && !signal.aborted && iterations < MAX_ITERATIONS) {
+        console.log(`[Agent-Stream] ${pendingTodos.length} todos remain — auto-continuing`);
+        const todoSummary = pendingTodos.map((t, i) => `${i + 1}. ${t.content}`).join('\n');
+        messages.push({
+          role: 'system',
+          content: `[System: You stopped but ${pendingTodos.length} tasks remain unfinished. You MUST continue now. Remaining tasks:\n${todoSummary}\nPick the next pending task and execute it with a tool call. Do NOT respond with text — call a tool.]`,
+        });
+        sendEvent('token_delta', { content: `\n\n⏳ Continuing — ${pendingTodos.length} tasks remaining...\n`, iteration: iterations });
+        continue; // loop back to call LLM again
+      }
       break;
     }
 
@@ -1234,7 +1261,17 @@ async function runStreamingAgent(
         ...(toolExecResult.diff ? { diff: toolExecResult.diff } : {}),
       });
 
-      messages.push({ role: 'tool', content: toolResult, tool_call_id: toolCall.id });      // Save tool execution to conversation
+      // If the tool failed, inject a recovery message so the agent retries
+      if (!isSuccess) {
+        console.log(`[Agent-Stream] Tool ${toolCall.function.name} failed: ${toolResult.substring(0, 100)}`);
+        messages.push({
+          role: 'system',
+          content: `[System: The tool call failed. Do NOT give up. Analyze the error, fix the issue, and retry with a corrected approach. Error: ${toolResult.substring(0, 300)}]`,
+        });
+      }
+
+      messages.push({ role: 'tool', content: toolResult, tool_call_id: toolCall.id });
+      // Save tool execution to conversation
       if (conversationId && conversationStore) {
         await conversationStore.addMessage(conversationId, {
           id: `tool_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
