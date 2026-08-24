@@ -757,6 +757,18 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
           </div>
         )}
 
+        {/* Tool Activity Bar */}
+        {toolActivity.length > 0 && (
+          <div className="px-4 py-1.5 bg-dark-800/50 border-b border-dark-700 flex items-center gap-3 overflow-x-auto">
+            <Terminal size={10} className="text-dark-400 flex-shrink-0" />
+            {toolActivity.map((ta, i) => (
+              <span key={i} className={`text-[10.5px] whitespace-nowrap ${ta.status === 'completed' ? 'text-green-400' : ta.status === 'error' ? 'text-red-400' : 'text-dark-400'}`}>
+                {ta.name}
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Todo Checklist (agent task tracking) */}
         {todos.length > 0 && (
           <div className="px-4 py-2 border-b border-dark-700 bg-dark-900/60">
@@ -782,18 +794,6 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                 </div>
               ))}
             </div>
-          </div>
-        )}
-
-        {/* Tool Activity Bar */}
-        {toolActivity.length > 0 && (
-          <div className="px-4 py-1.5 bg-dark-800/50 border-b border-dark-700 flex items-center gap-3 overflow-x-auto">
-            <Terminal size={10} className="text-dark-400 flex-shrink-0" />
-            {toolActivity.map((ta, i) => (
-              <span key={i} className={`text-[10.5px] whitespace-nowrap ${ta.status === 'completed' ? 'text-green-400' : ta.status === 'error' ? 'text-red-400' : 'text-dark-400'}`}>
-                {ta.name}
-              </span>
-            ))}
           </div>
         )}
 
