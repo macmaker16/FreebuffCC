@@ -95,6 +95,17 @@ class BrowserManager {
   getScreenshotDir(): string {
     return this.screenshotDir;
   }
+
+  async getContext(): Promise<any> {
+    if (!this.browser || !this.browser.isConnected()) return null;
+    if (!this.context) {
+      this.context = await this.browser.newContext({
+        viewport: { width: 1280, height: 800 },
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      });
+    }
+    return this.context;
+  }
 }
 
 // Singleton instance
@@ -443,6 +454,199 @@ async function executeBrowserTool(
         console.log(`[Browser] Waiting for: ${sel3}`);
         await page.waitForSelector(sel3, { timeout });
         return { success: true, output: `Element found: ${sel3}` };
+      }
+
+      case 'browser_fill': {
+        const fillSel = args.selector as string;
+        const fillVal = args.value as string;
+        if (!fillSel || fillVal === undefined) return { success: false, output: '', error: 'selector and value required' };
+        await page.fill(fillSel, fillVal);
+        return { success: true, output: `Filled ${fillSel} with '${fillVal.substring(0, 50)}'` };
+      }
+
+      case 'browser_press': {
+        const key = args.key as string;
+        if (!key) return { success: false, output: '', error: 'key required (e.g., Enter, Tab, Escape, ArrowDown)' };
+        await page.keyboard.press(key);
+        return { success: true, output: `Pressed: ${key}` };
+      }
+
+      case 'browser_hover': {
+        const hoverSel = args.selector as string;
+        if (!hoverSel) return { success: false, output: '', error: 'selector required' };
+        await page.hover(hoverSel);
+        return { success: true, output: `Hovered: ${hoverSel}` };
+      }
+
+      case 'browser_check': {
+        const checkSel = args.selector as string;
+        const checked = args.checked !== false;
+        if (!checkSel) return { success: false, output: '', error: 'selector required' };
+        if (checked) await page.check(checkSel); else await page.uncheck(checkSel);
+        return { success: true, output: `${checked ? 'Checked' : 'Unchecked'}: ${checkSel}` };
+      }
+
+      case 'browser_drag': {
+        const fromSel = args.from_selector as string;
+        const toSel = args.to_selector as string;
+        if (!fromSel || !toSel) return { success: false, output: '', error: 'from_selector and to_selector required' };
+        await page.dragAndDrop(fromSel, toSel);
+        return { success: true, output: `Dragged ${fromSel} to ${toSel}` };
+      }
+
+      case 'browser_upload': {
+        const uploadSel = args.selector as string;
+        const filePath = args.file_path as string;
+        if (!uploadSel || !filePath) return { success: false, output: '', error: 'selector and file_path required' };
+        const fileInput = await page.$(uploadSel);
+        if (!fileInput) return { success: false, output: '', error: `Input not found: ${uploadSel}` };
+        await fileInput.setInputFiles(filePath);
+        return { success: true, output: `Uploaded ${filePath} to ${uploadSel}` };
+      }
+
+      case 'browser_new_tab': {
+        const url = args.url as string;
+        const newPage = await browserManager.getContext().then(c => c?.newPage());
+        if (newPage && url) await newPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        return { success: true, output: `New tab opened${url ? ': ' + url : ''}` };
+      }
+
+      case 'browser_switch_tab': {
+        const index = (args.index as number) || 0;
+        const context = await browserManager.getContext();
+        if (!context) return { success: false, output: '', error: 'No browser context' };
+        const pages = context.pages();
+        if (index >= pages.length) return { success: false, output: '', error: `Tab ${index} not found (have ${pages.length})` };
+        // Note: Playwright doesn't have a direct switchTab, but we can bring a page to front
+        await pages[index].bringToFront();
+        return { success: true, output: `Switched to tab ${index}: ${pages[index].url()}` };
+      }
+
+      case 'browser_list_tabs': {
+        const ctx = await browserManager.getContext();
+        if (!ctx) return { success: false, output: '', error: 'No browser context' };
+        const tabs = ctx.pages().map((p: any, i: number) => `Tab ${i}: ${p.url()} — ${p.title()}`);
+        return { success: true, output: tabs.join('\n') || 'No tabs open' };
+      }
+
+      case 'browser_go_back': {
+        await page.goBack({ timeout: 10000 });
+        return { success: true, output: `Back to: ${page.url()}` };
+      }
+
+      case 'browser_go_forward': {
+        await page.goForward({ timeout: 10000 });
+        return { success: true, output: `Forward to: ${page.url()}` };
+      }
+
+      case 'browser_reload': {
+        await page.reload({ timeout: 15000 });
+        return { success: true, output: `Reloaded: ${page.url()}\nTitle: ${await page.title()}` };
+      }
+
+      case 'browser_pdf': {
+        const pdfPath = (args.path as string) || `screenshot_${Date.now()}.pdf`;
+        const dir = browserManager.getScreenshotDir();
+        const fullPath = require('path').join(dir, pdfPath);
+        await page.pdf({ path: fullPath, format: 'A4' });
+        return { success: true, output: `PDF saved: ${fullPath}` };
+      }
+
+      case 'browser_cookie': {
+        const action = (args.action as string) || 'get';
+        if (action === 'get') {
+          const cookies = await page.context().cookies();
+          return { success: true, output: JSON.stringify(cookies.slice(0, 20), null, 2) };
+        }
+        if (action === 'set' && args.name && args.value) {
+          await page.context().addCookies([{ name: args.name, value: args.value, url: page.url() }]);
+          return { success: true, output: `Cookie set: ${args.name}=${args.value}` };
+        }
+        return { success: false, output: '', error: 'action=get|set, name, value required' };
+      }
+
+      case 'browser_local_storage': {
+        const lsAction = (args.action as string) || 'get';
+        if (lsAction === 'get') {
+          const data = await page.evaluate(() => JSON.stringify(localStorage));
+          return { success: true, output: data.substring(0, 2000) };
+        }
+        if (lsAction === 'set' && args.key && args.value) {
+          await page.evaluate(({k, v}: {k: string, v: string}) => localStorage.setItem(k, v), {k: args.key, v: args.value});
+          return { success: true, output: `localStorage[${args.key}] = ${args.value}` };
+        }
+        if (lsAction === 'clear') {
+          await page.evaluate(() => localStorage.clear());
+          return { success: true, output: 'localStorage cleared' };
+        }
+        return { success: false, output: '', error: 'action=get|set|clear required' };
+      }
+
+      case 'browser_intercept': {
+        const pattern = args.pattern as string || '*';
+        const route = args.route as string || 'block';
+        const context = await browserManager.getContext();
+        if (!context) return { success: false, output: '', error: 'No browser context' };
+        if (route === 'block') {
+          await context.route(pattern, (routeObj: any) => routeObj.abort());
+          return { success: true, output: `Blocking requests matching: ${pattern}` };
+        }
+        return { success: true, output: `Intercept pattern: ${pattern}` };
+      }
+
+      case 'browser_emulate': {
+        const device = args.device as string;
+        if (!device) return { success: false, output: '', error: 'device required (e.g., iPhone 14, Pixel 7)' };
+        // Close current page and create new one with device settings
+        const pw = require('playwright-core');
+        const devices = pw.devices || {};
+        const deviceInfo = devices[device];
+        if (!deviceInfo) {
+          const available = Object.keys(devices).slice(0, 10).join(', ');
+          return { success: false, output: '', error: `Device not found: ${device}. Available: ${available}...` };
+        }
+        const context = await browserManager.getContext();
+        if (!context) return { success: false, output: '', error: 'No browser context' };
+        const emuPage = await context.newPage();
+        await emuPage.setViewportSize(deviceInfo.viewport);
+        return { success: true, output: `Emulating: ${device}\nViewport: ${deviceInfo.viewport.width}x${deviceInfo.viewport.height}\nUser-Agent: ${deviceInfo.userAgent.substring(0, 80)}...` };
+      }
+
+      case 'browser_auth': {
+        const authAction = args.action as string;
+        if (authAction === 'login' && args.url && args.username && args.password) {
+          await page.goto(args.url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+          // Try common login selectors
+          const usernameSelectors = ['input[name="username"]', 'input[name="email"]', 'input[type="email"]', '#username', '#email'];
+          const passwordSelectors = ['input[name="password"]', 'input[type="password"]', '#password'];
+          for (const sel of usernameSelectors) {
+            try { await page.fill(sel, args.username); break; } catch {}
+          }
+          for (const sel of passwordSelectors) {
+            try { await page.fill(sel, args.password); break; } catch {}
+          }
+          // Try to submit
+          const submitSelectors = ['button[type="submit"]', 'input[type="submit"]', 'button:has-text("Login")', 'button:has-text("Sign in")'];
+          for (const sel of submitSelectors) {
+            try { await page.click(sel); break; } catch {}
+          }
+          await page.waitForTimeout(3000);
+          return { success: true, output: `Logged in to: ${args.url}\nCurrent URL: ${page.url()}\nTitle: ${await page.title()}` };
+        }
+        if (authAction === 'save_state') {
+          const statePath = require('path').join(browserManager.getScreenshotDir(), 'auth-state.json');
+          const state = await page.context().storageState();
+          require('fs').writeFileSync(statePath, JSON.stringify(state));
+          return { success: true, output: `Auth state saved: ${statePath}` };
+        }
+        if (authAction === 'load_state') {
+          const statePath2 = require('path').join(browserManager.getScreenshotDir(), 'auth-state.json');
+          if (!require('fs').existsSync(statePath2)) return { success: false, output: '', error: 'No saved auth state found' };
+          const state2 = JSON.parse(require('fs').readFileSync(statePath2, 'utf-8'));
+          await page.context().addCookies(state2.cookies);
+          return { success: true, output: `Auth state loaded (${state2.cookies.length} cookies)` };
+        }
+        return { success: false, output: '', error: 'action=login|save_state|load_state required' };
       }
 
       case 'browser_close': {

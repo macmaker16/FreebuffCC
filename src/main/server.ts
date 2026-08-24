@@ -281,7 +281,12 @@ const SYSTEM_PROMPT_STATIC = `You are Michaelangelo, an expert AI coding agent: 
 - run_command — shell. Destructive system commands are blocked; other commands may require one-click user approval.
 - web_search / web_fetch / web_lookup — current external information via DuckDuckGo (free, no key).
 - browser_navigate / browser_screenshot / browser_get_content / browser_evaluate / browser_close — headless browser for visual analysis.
-- browser_click / browser_type / browser_select / browser_scroll / browser_wait_for — E2E testing tools. Use to test web UIs: click buttons, fill forms, select options, scroll, wait for elements.
+- browser_click / browser_type / browser_fill / browser_press / browser_hover / browser_check / browser_select / browser_scroll / browser_drag / browser_upload / browser_wait_for — full Playwright E2E testing.
+- browser_new_tab / browser_switch_tab / browser_list_tabs — multi-tab management.
+- browser_go_back / browser_go_forward / browser_reload — navigation history.
+- browser_pdf / browser_cookie / browser_local_storage / browser_intercept — page export, cookies, storage, network.
+- browser_emulate — mobile device emulation (iPhone, Pixel, etc.).
+- browser_auth — login, save/load auth state for testing protected pages.
 - ensure_dependency — auto-detect and install missing tools (docker, node, python, etc.). Use when a required tool is not installed.
 - check_links — crawl a website URL and find broken links (404, timeout). Use after building a web app.
 - fix_links — check links AND scan source files for broken imports. Returns a full report.
@@ -1043,7 +1048,25 @@ async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
     case 'browser_type':
     case 'browser_select':
     case 'browser_scroll':
-    case 'browser_wait_for': {
+    case 'browser_wait_for':
+    case 'browser_fill':
+    case 'browser_press':
+    case 'browser_hover':
+    case 'browser_check':
+    case 'browser_drag':
+    case 'browser_upload':
+    case 'browser_new_tab':
+    case 'browser_switch_tab':
+    case 'browser_list_tabs':
+    case 'browser_go_back':
+    case 'browser_go_forward':
+    case 'browser_reload':
+    case 'browser_pdf':
+    case 'browser_cookie':
+    case 'browser_local_storage':
+    case 'browser_intercept':
+    case 'browser_emulate':
+    case 'browser_auth': {
       const ctx = { sessionId: 'agentic', workspace: getWorkspaceDir(), model: '', messages: [], iteration: 0, maxIterations: 1, tools: new Map(), metadata: {} };
       const result = await BrowserSkill.execute(toolCall.function.name, args, ctx);
       return { output: result.output || result.error || '(no output)' };
@@ -1656,6 +1679,24 @@ const TOOL_DEFINITIONS = [
   { type: 'function', function: { name: 'browser_select', description: 'Select an option from a dropdown by CSS selector and value.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of select element' }, value: { type: 'string', description: 'Option value to select' } }, required: ['selector', 'value'] } } },
   { type: 'function', function: { name: 'browser_scroll', description: 'Scroll the page up or down.', parameters: { type: 'object', properties: { direction: { type: 'string', description: 'up or down (default: down)' }, pixels: { type: 'number', description: 'Pixels to scroll (default: 500)' } }, required: [] } } },
   { type: 'function', function: { name: 'browser_wait_for', description: 'Wait for a CSS selector to appear on the page. Use after navigation or clicks.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector to wait for' }, timeout_ms: { type: 'number', description: 'Timeout in ms (default 10000)' } }, required: ['selector'] } } },
+  { type: 'function', function: { name: 'browser_fill', description: 'Fill a form field with a value (clears first). More reliable than type for React/Angular forms.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of input' }, value: { type: 'string', description: 'Value to fill' } }, required: ['selector', 'value'] } } },
+  { type: 'function', function: { name: 'browser_press', description: 'Press a keyboard key (Enter, Tab, Escape, ArrowDown, etc.).', parameters: { type: 'object', properties: { key: { type: 'string', description: 'Key to press (e.g., Enter, Tab, Escape, ArrowDown, Control+A)' } }, required: ['key'] } } },
+  { type: 'function', function: { name: 'browser_hover', description: 'Hover over an element to trigger hover states and tooltips.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector to hover' } }, required: ['selector'] } } },
+  { type: 'function', function: { name: 'browser_check', description: 'Check or uncheck a checkbox.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of checkbox' }, checked: { type: 'boolean', description: 'true to check, false to uncheck (default true)' } }, required: ['selector'] } } },
+  { type: 'function', function: { name: 'browser_drag', description: 'Drag an element from one selector to another.', parameters: { type: 'object', properties: { from_selector: { type: 'string', description: 'Source element CSS selector' }, to_selector: { type: 'string', description: 'Target element CSS selector' } }, required: ['from_selector', 'to_selector'] } } },
+  { type: 'function', function: { name: 'browser_upload', description: 'Upload a file to a file input element.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of file input' }, file_path: { type: 'string', description: 'Absolute path to file' } }, required: ['selector', 'file_path'] } } },
+  { type: 'function', function: { name: 'browser_new_tab', description: 'Open a new browser tab.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'URL to open in new tab' } }, required: [] } } },
+  { type: 'function', function: { name: 'browser_switch_tab', description: 'Switch to a different tab by index.', parameters: { type: 'object', properties: { index: { type: 'number', description: 'Tab index (0-based)' } }, required: ['index'] } } },
+  { type: 'function', function: { name: 'browser_list_tabs', description: 'List all open browser tabs.', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'browser_go_back', description: 'Navigate back in browser history.', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'browser_go_forward', description: 'Navigate forward in browser history.', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'browser_reload', description: 'Reload the current page.', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'browser_pdf', description: 'Save the current page as a PDF file.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Output filename (default: auto-generated)' } }, required: [] } } },
+  { type: 'function', function: { name: 'browser_cookie', description: 'Get or set browser cookies.', parameters: { type: 'object', properties: { action: { type: 'string', description: 'get or set' }, name: { type: 'string', description: 'Cookie name (for set)' }, value: { type: 'string', description: 'Cookie value (for set)' } }, required: ['action'] } } },
+  { type: 'function', function: { name: 'browser_local_storage', description: 'Get, set, or clear localStorage.', parameters: { type: 'object', properties: { action: { type: 'string', description: 'get, set, or clear' }, key: { type: 'string', description: 'Key (for set)' }, value: { type: 'string', description: 'Value (for set)' } }, required: ['action'] } } },
+  { type: 'function', function: { name: 'browser_intercept', description: 'Block or intercept network requests matching a pattern.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'URL pattern (e.g., **/*.analytics.js)' }, route: { type: 'string', description: 'block (default)' } }, required: [] } } },
+  { type: 'function', function: { name: 'browser_emulate', description: 'Emulate a mobile device (viewport, user-agent, touch).', parameters: { type: 'object', properties: { device: { type: 'string', description: 'Device name (e.g., iPhone 14, Pixel 7)' } }, required: ['device'] } } },
+  { type: 'function', function: { name: 'browser_auth', description: 'Handle login and save/load auth state (cookies, localStorage).', parameters: { type: 'object', properties: { action: { type: 'string', description: 'login, save_state, or load_state' }, url: { type: 'string', description: 'Login URL (for login)' }, username: { type: 'string', description: 'Username or email (for login)' }, password: { type: 'string', description: 'Password (for login)' } }, required: ['action'] } } },
   { type: 'function', function: { name: 'check_links', description: 'Crawl a website URL and find broken links (404, timeout, etc.). Use after building a web app to verify all links work.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'Base URL to crawl (e.g., http://localhost:3000)' }, depth: { type: 'number', description: 'Crawl depth (default 2, max 4)' } }, required: ['url'] } } },
   { type: 'function', function: { name: 'fix_links', description: 'Check links AND scan source files for broken imports/references. Returns a report of what needs fixing.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'Base URL to crawl' }, file_path: { type: 'string', description: 'Optional specific file to check' } }, required: ['url'] } } },
   { type: 'function', function: { name: 'ensure_dependency', description: 'Check if a tool (docker, node, python, etc.) is installed. If not, install it automatically. Returns install instructions or confirmation.', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Tool/command name to check (e.g., docker, node, npm, python3)' }, install_cmd: { type: 'string', description: 'Optional custom install command' } }, required: ['name'] } } },
