@@ -2489,6 +2489,25 @@ export async function startExpressApp(): Promise<express.Express> {
     res.json({ success });
   });
 
+  // POST /api/plugins/custom — Add a custom plugin
+  app.post('/api/plugins/custom', (req: Request, res: Response) => {
+    const { name, description, author, tools } = req.body;
+    if (!name || !tools) return res.status(400).json({ error: 'name and tools required' });
+    if (!pluginRegistry) return res.status(500).json({ error: 'Registry not loaded' });
+    const success = pluginRegistry.addCustomPlugin({ name, description: description || '', author: author || 'custom', tools });
+    if (!success) return res.status(409).json({ error: 'Plugin with this name already exists' });
+    res.json({ success: true });
+  });
+
+  // POST /api/plugins/remove-custom — Remove a custom plugin
+  app.post('/api/plugins/remove-custom', (req: Request, res: Response) => {
+    const { pluginId } = req.body;
+    if (!pluginId) return res.status(400).json({ error: 'pluginId required' });
+    if (!pluginRegistry) return res.status(500).json({ error: 'Registry not loaded' });
+    const success = pluginRegistry.removeCustomPlugin(pluginId);
+    res.json({ success });
+  });
+
   // ==========================================================================
   // GET /api/conversations — List all conversations
   // ==========================================================================

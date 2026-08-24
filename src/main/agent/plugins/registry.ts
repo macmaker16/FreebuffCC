@@ -162,6 +162,110 @@ const PLUGIN_CATALOG: PluginDefinition[] = [
       { name: 'aws_cf_deploy', description: 'Deploy CloudFormation stack', parameters: { stack_name: { type: 'string' }, template: { type: 'string' } } },
     ],
   },
+  {
+    id: 'slack-integration',
+    name: 'Slack Integration',
+    description: 'Send messages, create channels, and manage Slack workspaces from the agent.',
+    author: 'community',
+    version: '1.0.0',
+    category: 'productivity',
+    icon: '💬',
+    downloads: 9100,
+    tools: [
+      { name: 'slack_send', description: 'Send a message to a Slack channel', parameters: { channel: { type: 'string' }, message: { type: 'string' } } },
+      { name: 'slack_channels', description: 'List channels in the workspace', parameters: {} },
+      { name: 'slack_search', description: 'Search messages in Slack', parameters: { query: { type: 'string' } } },
+    ],
+  },
+  {
+    id: 'notion-integration',
+    name: 'Notion Integration',
+    description: 'Read and write Notion pages, databases, and wikis from the agent.',
+    author: 'community',
+    version: '1.1.0',
+    category: 'productivity',
+    icon: '📝',
+    downloads: 7800,
+    tools: [
+      { name: 'notion_read', description: 'Read a Notion page by ID', parameters: { page_id: { type: 'string' } } },
+      { name: 'notion_write', description: 'Create or update a Notion page', parameters: { page_id: { type: 'string' }, content: { type: 'string' } } },
+      { name: 'notion_database', description: 'Query a Notion database', parameters: { database_id: { type: 'string' }, filter: { type: 'string' } } },
+    ],
+  },
+  {
+    id: 'sentry-monitoring',
+    name: 'Sentry Monitoring',
+    description: 'Fetch errors, performance traces, and release health from Sentry.',
+    author: 'community',
+    version: '1.0.0',
+    category: 'devops',
+    icon: '🔴',
+    downloads: 5200,
+    tools: [
+      { name: 'sentry_issues', description: 'List recent Sentry issues', parameters: { project: { type: 'string' }, limit: { type: 'number' } } },
+      { name: 'sentry_issue_detail', description: 'Get detailed info on a specific issue', parameters: { issue_id: { type: 'string' } } },
+      { name: 'sentry_releases', description: 'List recent releases with health', parameters: { project: { type: 'string' } } },
+    ],
+  },
+  {
+    id: 'vercel-deploy',
+    name: 'Vercel Deploy',
+    description: 'Deploy projects to Vercel, manage domains, and inspect deployments.',
+    author: 'community',
+    version: '1.2.0',
+    category: 'devops',
+    icon: '▲',
+    downloads: 11500,
+    tools: [
+      { name: 'vercel_deploy', description: 'Deploy the current project to Vercel', parameters: { project: { type: 'string' }, production: { type: 'boolean' } } },
+      { name: 'vercel_status', description: 'Check deployment status', parameters: { deployment_id: { type: 'string' } } },
+      { name: 'vercel_logs', description: 'Fetch function logs', parameters: { deployment_id: { type: 'string' } } },
+    ],
+  },
+  {
+    id: 'linear-project',
+    name: 'Linear Project Mgmt',
+    description: 'Create issues, update status, and track sprints in Linear.',
+    author: 'community',
+    version: '1.0.0',
+    category: 'productivity',
+    icon: '🔷',
+    downloads: 4300,
+    tools: [
+      { name: 'linear_create_issue', description: 'Create a new Linear issue', parameters: { title: { type: 'string' }, team: { type: 'string' }, description: { type: 'string' } } },
+      { name: 'linear_update_status', description: 'Update issue status', parameters: { issue_id: { type: 'string' }, status: { type: 'string' } } },
+      { name: 'linear_list_issues', description: 'List issues in a team', parameters: { team: { type: 'string' }, assignee: { type: 'string' } } },
+    ],
+  },
+  {
+    id: 'postman-api',
+    name: 'Postman API Client',
+    description: 'Run Postman collections, validate APIs, and generate tests.',
+    author: 'community',
+    version: '1.0.0',
+    category: 'development',
+    icon: '📮',
+    downloads: 6100,
+    tools: [
+      { name: 'postman_run', description: 'Run a Postman collection', parameters: { collection: { type: 'string' }, environment: { type: 'string' } } },
+      { name: 'postman_generate_test', description: 'Generate tests from API spec', parameters: { spec_url: { type: 'string' } } },
+    ],
+  },
+  {
+    id: 'supabase-tools',
+    name: 'Supabase Tools',
+    description: 'Manage Supabase databases, auth, storage, and edge functions.',
+    author: 'michaelangelo',
+    version: '1.0.0',
+    category: 'data',
+    icon: '⚡',
+    downloads: 8700,
+    tools: [
+      { name: 'supabase_query', description: 'Query a Supabase table via REST', parameters: { table: { type: 'string' }, filter: { type: 'string' } } },
+      { name: 'supabase_deploy_edge', description: 'Deploy an edge function', parameters: { name: { type: 'string' } } },
+      { name: 'supabase_storage_upload', description: 'Upload file to Supabase Storage', parameters: { bucket: { type: 'string' }, path: { type: 'string' }, file: { type: 'string' } } },
+    ],
+  },
 ];
 
 // ============================================================================
@@ -217,10 +321,12 @@ export class PluginRegistry {
 export class MarketplaceRegistry {
   private store: Store;
   private installedPlugins: Map<string, InstalledPlugin> = new Map();
+  private customPlugins: Map<string, PluginDefinition> = new Map();
 
   constructor() {
     this.store = new Store({ name: 'michaelangelo-plugins' });
     this.loadInstalled();
+    this.loadCustomPlugins();
   }
 
   /** Load installed plugins from persistent store */
@@ -234,18 +340,6 @@ export class MarketplaceRegistry {
   /** Save installed plugins to persistent store */
   private saveInstalled(): void {
     this.store.set('installed', Array.from(this.installedPlugins.values()));
-  }
-
-  /** Get all available plugins with install status */
-  getAll(): (PluginDefinition & { installed: boolean; enabled: boolean })[] {
-    return PLUGIN_CATALOG.map(p => {
-      const installed = this.installedPlugins.get(p.id);
-      return {
-        ...p,
-        installed: !!installed,
-        enabled: installed?.enabled ?? false,
-      };
-    });
   }
 
   /** Get plugins filtered by category */
@@ -265,7 +359,7 @@ export class MarketplaceRegistry {
 
   /** Install a plugin */
   install(pluginId: string): boolean {
-    const plugin = PLUGIN_CATALOG.find(p => p.id === pluginId);
+    const plugin = [...PLUGIN_CATALOG, ...Array.from(this.customPlugins.values())].find(p => p.id === pluginId);
     if (!plugin) return false;
     if (this.installedPlugins.has(pluginId)) return false;
 
@@ -312,13 +406,70 @@ export class MarketplaceRegistry {
     return tools;
   }
 
+  /** Load custom plugins from persistent store */
+  private loadCustomPlugins(): void {
+    const data = this.store.get('customPlugins', []) as PluginDefinition[];
+    for (const p of data) {
+      this.customPlugins.set(p.id, p);
+    }
+  }
+
+  /** Save custom plugins to persistent store */
+  private saveCustomPlugins(): void {
+    this.store.set('customPlugins', Array.from(this.customPlugins.values()));
+  }
+
+  /** Add a custom plugin from user input (npm package or manual definition) */
+  addCustomPlugin(def: { name: string; description: string; author: string; tools: { name: string; description: string; parameters: Record<string, any> }[] }): boolean {
+    const id = `custom-${def.name.toLowerCase().replace(/\s+/g, '-')}`;
+    if (PLUGIN_CATALOG.find(p => p.id === id) || this.customPlugins.has(id)) return false;
+    const plugin: PluginDefinition = {
+      id,
+      name: def.name,
+      description: def.description,
+      author: def.author || 'custom',
+      version: '1.0.0',
+      category: 'productivity',
+      icon: '🧩',
+      downloads: 0,
+      tools: def.tools,
+    };
+    this.customPlugins.set(id, plugin);
+    this.saveCustomPlugins();
+    return true;
+  }
+
+  /** Remove a custom plugin */
+  removeCustomPlugin(pluginId: string): boolean {
+    if (!pluginId.startsWith('custom-')) return false;
+    if (!this.customPlugins.has(pluginId)) return false;
+    this.customPlugins.delete(pluginId);
+    this.installedPlugins.delete(pluginId);
+    this.saveCustomPlugins();
+    this.saveInstalled();
+    return true;
+  }
+
+  /** Get all available plugins (built-in + custom) with install status */
+  getAll(): (PluginDefinition & { installed: boolean; enabled: boolean })[] {
+    const builtIn = PLUGIN_CATALOG.map(p => {
+      const installed = this.installedPlugins.get(p.id);
+      return { ...p, installed: !!installed, enabled: installed?.enabled ?? false };
+    });
+    const custom = Array.from(this.customPlugins.values()).map(p => {
+      const installed = this.installedPlugins.get(p.id);
+      return { ...p, installed: !!installed, enabled: installed?.enabled ?? false };
+    });
+    return [...builtIn, ...custom];
+  }
+
   /** Get stats */
   getStats(): { total: number; installed: number; enabled: number; totalTools: number } {
     const all = this.getAll();
     const installed = all.filter(p => p.installed);
     const enabled = installed.filter(p => p.enabled);
     const totalTools = enabled.reduce((sum, p) => {
-      const plugin = PLUGIN_CATALOG.find(cp => cp.id === p.id);
+      const plugin = [...PLUGIN_CATALOG, ...Array.from(this.customPlugins.values())].find(cp => cp.id === p.id);
       return sum + (plugin?.tools.length || 0);
     }, 0);
     return { total: all.length, installed: installed.length, enabled: enabled.length, totalTools };
