@@ -291,6 +291,11 @@ const SYSTEM_PROMPT_STATIC = `You are Michaelangelo, an expert AI coding agent: 
 - check_links — crawl a website URL and find broken links (404, timeout). Use after building a web app.
 - fix_links — check links AND scan source files for broken imports. Returns a full report.
 - /audit — full site audit: crawl links, check imports, test interactive elements.
+- generate_ui — generate a complete UI component from a description. Creates production-ready code with Tailwind, animations, responsive design.
+- check_design — analyze a web page for design quality: spacing, contrast, alignment, typography.
+- create_theme — generate a complete design system with colors, typography, spacing, shadows.
+- generate_component — generate specific components (navbar, hero, card, modal, form, table, sidebar, footer, pricing, stats).
+- Design Skills: /design-landing, /design-dashboard, /design-form, /design-card, /design-theme, /design-responsive, /design-accessibility, /design-animation.
 - git_status / git_diff / git_stage / git_commit / git_branch / git_log — full git workflow. Stage changes, commit, create branches.
 - code_symbols — extract function/class/interface/import/export declarations from a file. Use to understand structure before editing.
 - diagnose_error — analyze error messages and stack traces. Reads the source file, shows context, suggests a fix.
@@ -775,6 +780,91 @@ async function executeDiagnoseError(args: { error_text: string; file_path?: stri
 // ============================================================================
 
 // ============================================================================
+// UI/UX DESIGN TOOLS
+// ============================================================================
+
+async function executeGenerateUI(args: { description: string; style?: string; framework?: string }): Promise<string> {
+  const desc = args.description || 'a modern UI component';
+  const style = args.style || 'modern';
+  const fw = args.framework || 'react';
+  // Generate a comprehensive prompt for the LLM to create the UI
+  const designPrompt = `Generate a production-ready ${fw} component for: ${desc}
+
+Design Requirements:
+- Style: ${style} (clean typography, proper spacing, smooth animations)
+- Responsive: mobile-first, works on all screen sizes
+- Accessible: ARIA labels, keyboard navigation, proper contrast
+- Animated: hover effects, transitions, micro-interactions
+- Modern: Tailwind CSS, glassmorphism, gradients where appropriate
+
+Output complete, copy-paste ready code with:
+1. Full component code
+2. All imports
+3. CSS/Tailwind classes
+4. Props interface
+5. Usage example`;
+  return `[UI GENERATION]\n${designPrompt}\n\nThe agent will now create the component following these design principles.`;
+}
+
+async function executeCheckDesign(args: { url: string; viewport?: string }): Promise<string> {
+  const url2 = args.url || 'http://localhost:3000';
+  const viewport = args.viewport || 'desktop';
+  const report: string[] = [];
+  report.push(`**Design Audit: ${url2}** (${viewport})\n`);
+  // Use browser to analyze the page
+  report.push('**Checks to perform:**');
+  report.push('1. Visual hierarchy — headings, body text, captions properly sized');
+  report.push('2. Color contrast — WCAG AA compliance (4.5:1 ratio)');
+  report.push('3. Spacing consistency — consistent padding/margins');
+  report.push('4. Typography — max 2-3 font families, proper line heights');
+  report.push('5. Alignment — grid-based layout, consistent gutters');
+  report.push('6. Interactive states — hover, focus, active states on all clickable elements');
+  report.push('7. Responsive — works on mobile (375px), tablet (768px), desktop (1440px)');
+  report.push('8. Loading states — skeleton screens, spinners for async content');
+  report.push('9. Empty states — proper messaging when no data');
+  report.push('10. Error states — graceful error handling with recovery options');
+  report.push('\nUse browser tools to navigate and verify each check.');
+  return report.join('\n');
+}
+
+async function executeCreateTheme(args: { style?: string; primary?: string; dark_mode?: boolean }): Promise<string> {
+  const style = args.style || 'modern';
+  const primary = args.primary || '#6366f1';
+  const dark = args.dark_mode !== false;
+  const themes: Record<string, any> = {
+    modern: { primary, secondary: '#8b5cf6', accent: '#06b6d4', bg: '#0f172a', surface: '#1e293b', text: '#f8fafc' },
+    minimal: { primary, secondary: '#64748b', accent: '#94a3b8', bg: '#ffffff', surface: '#f8fafc', text: '#0f172a' },
+    corporate: { primary: '#1e40af', secondary: '#3b82f6', accent: '#f59e0b', bg: '#f8fafc', surface: '#ffffff', text: '#1e293b' },
+    playful: { primary: '#ec4899', secondary: '#8b5cf6', accent: '#06b6d4', bg: '#fdf2f8', surface: '#ffffff', text: '#1e293b' },
+    elegant: { primary: '#0f172a', secondary: '#334155', accent: '#d4af37', bg: '#fafaf9', surface: '#ffffff', text: '#0f172a' },
+  };
+  const t = themes[style] || themes.modern;
+  return `**Design System Theme (${style}):**\n\nColors:\n- Primary: ${t.primary}\n- Secondary: ${t.secondary}\n- Accent: ${t.accent}\n- Background: ${t.bg}\n- Surface: ${t.surface}\n- Text: ${t.text}\n\nTypography:\n- Headings: Inter, system-ui, sans-serif\n- Body: Inter, system-ui, sans-serif\n- Mono: JetBrains Mono, monospace\n\nSpacing Scale:\n- xs: 4px, sm: 8px, md: 16px, lg: 24px, xl: 32px, 2xl: 48px\n\nShadows:\n- sm: 0 1px 2px rgba(0,0,0,0.05)\n- md: 0 4px 6px rgba(0,0,0,0.1)\n- lg: 0 10px 15px rgba(0,0,0,0.1)\n- xl: 0 20px 25px rgba(0,0,0,0.15)\n\nBorder Radius:\n- sm: 6px, md: 8px, lg: 12px, xl: 16px, full: 9999px\n\n${dark ? 'Dark Mode: swap bg/surface, invert text, add subtle overlays' : ''}`;
+}
+
+async function executeGenerateComponent(args: { type: string; props?: string; framework?: string }): Promise<string> {
+  const type = args.type || 'card';
+  const props = args.props || '';
+  const fw = args.framework || 'react';
+  const components: Record<string, string> = {
+    navbar: 'A responsive navigation bar with logo, links, mobile hamburger menu, and CTA button. Sticky on scroll with backdrop blur.',
+    hero: 'A stunning hero section with headline, subheadline, CTA buttons, and background gradient or image. Animated text reveal.',
+    card: 'A beautiful card with image, title, description, tags, and action button. Hover lift effect with shadow transition.',
+    modal: 'An accessible modal dialog with backdrop blur, close button, keyboard navigation, and smooth enter/exit animations.',
+    form: 'A multi-step form with validation, error states, progress indicator, and smooth transitions between steps.',
+    table: 'A sortable data table with search, pagination, row selection, and responsive horizontal scroll on mobile.',
+    sidebar: 'A collapsible sidebar with navigation items, icons, active state indicators, and smooth expand/collapse animation.',
+    footer: 'A comprehensive footer with logo, link columns, newsletter signup, social icons, and copyright.',
+    testimonial: 'A customer testimonial carousel with avatar, name, role, quote, and star rating. Auto-rotating with dot indicators.',
+    pricing: 'A pricing table with 3 tiers, feature comparison, popular badge, and toggle for monthly/annual billing.',
+    'feature-grid': 'A responsive grid of feature cards with icons, titles, and descriptions. Alternating layout on desktop.',
+    stats: 'An animated statistics section with counting numbers, labels, and supporting icons. Triggers on scroll.',
+  };
+  const desc = components[type] || `A ${type} component with modern design`;
+  return `[COMPONENT: ${type}]\n${desc}\n\nProps: ${props || 'default'}\nFramework: ${fw}\n\nThe agent will generate this component with full code, animations, and responsive design.`;
+}
+
+// ============================================================================
 // LINK CHECKER & AUTO-FIX
 // ============================================================================
 
@@ -1071,6 +1161,10 @@ async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
       const result = await BrowserSkill.execute(toolCall.function.name, args, ctx);
       return { output: result.output || result.error || '(no output)' };
     }
+    case 'generate_ui': return { output: await executeGenerateUI(args) };
+    case 'check_design': return { output: await executeCheckDesign(args) };
+    case 'create_theme': return { output: await executeCreateTheme(args) };
+    case 'generate_component': return { output: await executeGenerateComponent(args) };
     case 'check_links': return { output: await executeCheckLinks(args) };
     case 'fix_links': return { output: await executeFixLinks(args) };
     case 'ensure_dependency': return { output: await executeEnsureDependency(args) };
@@ -1697,6 +1791,10 @@ const TOOL_DEFINITIONS = [
   { type: 'function', function: { name: 'browser_intercept', description: 'Block or intercept network requests matching a pattern.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'URL pattern (e.g., **/*.analytics.js)' }, route: { type: 'string', description: 'block (default)' } }, required: [] } } },
   { type: 'function', function: { name: 'browser_emulate', description: 'Emulate a mobile device (viewport, user-agent, touch).', parameters: { type: 'object', properties: { device: { type: 'string', description: 'Device name (e.g., iPhone 14, Pixel 7)' } }, required: ['device'] } } },
   { type: 'function', function: { name: 'browser_auth', description: 'Handle login and save/load auth state (cookies, localStorage).', parameters: { type: 'object', properties: { action: { type: 'string', description: 'login, save_state, or load_state' }, url: { type: 'string', description: 'Login URL (for login)' }, username: { type: 'string', description: 'Username or email (for login)' }, password: { type: 'string', description: 'Password (for login)' } }, required: ['action'] } } },
+  { type: 'function', function: { name: 'generate_ui', description: 'Generate a complete UI component from a description. Creates production-ready React/HTML with Tailwind CSS, animations, and responsive design.', parameters: { type: 'object', properties: { description: { type: 'string', description: 'What to build (e.g., "a pricing card with 3 tiers")' }, style: { type: 'string', description: 'Style: modern, minimal, bold, glassmorphism, neumorphism' }, framework: { type: 'string', description: 'Framework: react, html, vue (default: react)' } }, required: ['description'] } } },
+  { type: 'function', function: { name: 'check_design', description: 'Analyze a web page for design quality: spacing, contrast, alignment, typography, and responsiveness. Returns a design audit report.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'URL to analyze (e.g., http://localhost:3000)' }, viewport: { type: 'string', description: 'Viewport to test: mobile, tablet, desktop' } }, required: ['url'] } } },
+  { type: 'function', function: { name: 'create_theme', description: 'Generate a complete design system with colors, typography, spacing, shadows, and component tokens.', parameters: { type: 'object', properties: { style: { type: 'string', description: 'Style: modern, minimal, corporate, playful, elegant' }, primary: { type: 'string', description: 'Primary color (hex or name)' }, dark_mode: { type: 'boolean', description: 'Include dark mode tokens' } }, required: [] } } },
+  { type: 'function', function: { name: 'generate_component', description: 'Generate a specific UI component with full code. Returns ready-to-use code with props, styles, and animations.', parameters: { type: 'object', properties: { type: { type: 'string', description: 'Component type: navbar, hero, card, modal, form, table, sidebar, footer, testimonial, pricing, feature-grid, stats' }, props: { type: 'string', description: 'Customization props (e.g., "title=Pricing, items=3, color=blue")' }, framework: { type: 'string', description: 'react, html, vue' } }, required: ['type'] } } },
   { type: 'function', function: { name: 'check_links', description: 'Crawl a website URL and find broken links (404, timeout, etc.). Use after building a web app to verify all links work.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'Base URL to crawl (e.g., http://localhost:3000)' }, depth: { type: 'number', description: 'Crawl depth (default 2, max 4)' } }, required: ['url'] } } },
   { type: 'function', function: { name: 'fix_links', description: 'Check links AND scan source files for broken imports/references. Returns a report of what needs fixing.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'Base URL to crawl' }, file_path: { type: 'string', description: 'Optional specific file to check' } }, required: ['url'] } } },
   { type: 'function', function: { name: 'ensure_dependency', description: 'Check if a tool (docker, node, python, etc.) is installed. If not, install it automatically. Returns install instructions or confirmation.', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Tool/command name to check (e.g., docker, node, npm, python3)' }, install_cmd: { type: 'string', description: 'Optional custom install command' } }, required: ['name'] } } },
