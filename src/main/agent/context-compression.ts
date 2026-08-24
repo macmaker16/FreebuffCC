@@ -25,10 +25,10 @@ import { ChatMessage } from './types';
 const CHARS_PER_TOKEN = 4;
 
 /** Default context threshold — trigger compression above this many tokens */
-const DEFAULT_TOKEN_THRESHOLD = 8000;
+const DEFAULT_TOKEN_THRESHOLD = 16000;
 
 /** Keep this many recent tool messages uncompressed (the "hot window") */
-const HOT_WINDOW_SIZE = 6;
+const HOT_WINDOW_SIZE = 12;
 
 /** Max tokens for the compressed summary */
 const SUMMARY_MAX_TOKENS = 800;
@@ -137,6 +137,25 @@ export class ContextCompressionEngine {
     const hotStart = Math.max(0, remaining.length - this.hotWindowSize);
     compressibleMessages.push(...remaining.slice(0, hotStart));
     hotWindow.push(...remaining.slice(hotStart));
+
+    // CRITICAL: Also preserve todo_write and create_plan results in the hot window
+    // These carry the task state — losing them causes the agent to stop early
+    for (let i = 0; i < compressibleMessages.length; i++) {
+      const msg = compressibleMessages[i];
+      const content = msg.content || '';
+      if (content.includes('SUCCESS: Todo list updated') || content.includes('Plan approved') || content.includes('Tool result: todo_write') || content.includes('Tool result: create_plan')) {
+        // Move this message and its preceding assistant message to the hot window
+        hotWindow.unshift(msg);
+        compressibleMessages.splice(i, 1);
+        i--;
+        // Also move the preceding assistant message that triggered this tool call
+        if (i >= 0 && compressibleMessages[i]?.role === 'assistant') {
+          hotWindow.unshift(compressibleMessages[i]);
+          compressibleMessages.splice(i, 1);
+          i--;
+        }
+      }
+    }
 
     // Only compress if we have meaningful tool output to compress
     const toolMessages = compressibleMessages.filter(
