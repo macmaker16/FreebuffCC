@@ -13,6 +13,7 @@ import SettingsView from './components/SettingsView';
 import AgentDashboard from './components/AgentDashboard';
 import PluginMarketplace from './components/PluginMarketplace';
 import SkillsView from './components/SkillsView';
+import UpdateNotification from './components/UpdateNotification';
 import { Model, ModelStatus } from './types';
 import { initAPI, fetchModels, testModel } from './services/api';
 
@@ -37,6 +38,8 @@ function App() {
   const fallbackNotification = useRef<string | null>(null);
   const [fallbackMsg, setFallbackMsg] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<any>(null);
+  const [appVersion, setAppVersion] = useState<string>('');
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('theme') as any) || 'dark');
   const [showShortcuts, setShowShortcuts] = useState(false);
 
@@ -72,7 +75,10 @@ function App() {
     // Listen for auto-update events
     window.electronAPI.onUpdateStatus((status) => {
       setUpdateStatus(status);
+      if (status.status === 'available') setUpdateDismissed(false);
     });
+    // Fetch app version
+    window.electronAPI.getAppVersion().then(setAppVersion).catch(() => {});
   }, []);
 
   // Fetch models when API is ready
@@ -170,6 +176,15 @@ function App() {
 
   return (
     <div className="flex h-screen bg-dark-950 text-white overflow-hidden">
+      {/* Auto-Update Modal */}
+      <UpdateNotification
+        updateInfo={updateDismissed ? null : updateStatus}
+        onCheck={() => window.electronAPI.checkForUpdates()}
+        onInstall={() => window.electronAPI.installUpdate()}
+        onDismiss={() => setUpdateDismissed(true)}
+        currentVersion={appVersion}
+      />
+
       {/* Title Bar */}
       <div className="fixed top-0 left-0 right-0 h-7 bg-dark-900 border-b border-dark-700 titlebar-drag z-50 flex items-center justify-center">
         <span className="text-[13px] font-medium text-dark-200">Michaelangelo</span>
@@ -234,10 +249,10 @@ function App() {
               → {activeModel.name}
             </p>
           )}
-          {/* Auto-Update Indicator */}
-          {updateStatus?.status === 'available' && (
+          {/* Auto-Update Badge */}
+          {updateStatus?.status === 'available' && !updateDismissed && (
             <button
-              onClick={() => window.electronAPI.checkForUpdates()}
+              onClick={() => setUpdateDismissed(false)}
               className="flex items-center gap-1.5 text-[12px] text-blue-400 hover:text-blue-300 cursor-pointer"
             >
               <Download size={10} />
@@ -248,22 +263,16 @@ function App() {
             <div className="flex items-center gap-1.5">
               <RefreshCw size={10} className="animate-spin text-blue-400" />
               <span className="text-[12px] text-blue-400">Downloading {Math.round(updateStatus.percent || 0)}%</span>
-              <div className="flex-1 h-1 bg-dark-700 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-500 rounded-full transition-all duration-300" style={{ width: `${updateStatus.percent || 0}%` }} />
-              </div>
             </div>
           )}
           {updateStatus?.status === 'ready' && (
             <button
-              onClick={() => window.electronAPI.installUpdate()}
+              onClick={() => setUpdateDismissed(false)}
               className="flex items-center gap-1.5 text-[12px] text-green-400 hover:text-green-300 cursor-pointer"
             >
               <Check size={10} />
               <span>Restart to update</span>
             </button>
-          )}
-          {updateStatus?.status === 'up-to-date' && (
-            <p className="text-[12px] text-dark-500">Up to date</p>
           )}
           {/* Theme Toggle */}
           <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
