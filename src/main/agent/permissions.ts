@@ -69,6 +69,7 @@ export class PermissionManager {
   }> = new Map();
   private approvedCommands: Set<string> = new Set();
   private deniedCommands: Set<string> = new Set();
+  private alwaysAllowedTools: Set<string> = new Set();
   private onPermissionRequest?: (request: PermissionRequest) => void;
 
   /** Set callback for when a permission request is created */
@@ -76,9 +77,15 @@ export class PermissionManager {
     this.onPermissionRequest = handler;
   }
 
+  /** Remember that the user approved ALL operations of this tool for the session */
+  markAlwaysAllowed(toolName: string): void {
+    this.alwaysAllowedTools.add(toolName);
+  }
+
   /** Check if a tool call requires permission */
   requiresPermission(toolName: string, args: Record<string, any>): boolean {
     if (!(toolName in REQUIRES_PERMISSION)) return false;
+    if (this.alwaysAllowedTools.has(toolName)) return false;
 
     // Bash: check if it's a safe command
     if (toolName === 'run_command' && args.command) {

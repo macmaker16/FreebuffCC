@@ -12,7 +12,7 @@ import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import * as path from 'path';
 import { createServer, Server } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { startExpressApp } from './server';
+import { startExpressApp, setPermissionUIBridge } from './server';
 import { autoUpdater, UpdateInfo } from 'electron-updater';
 import { agentEventBus } from './agent/event-bus';
 
@@ -158,12 +158,18 @@ function setupIPC(): void {
     return result.filePaths[0];
   });
 
-  // Permission system
+  // Permission system: agent (server) asks → renderer decides
   const pendingPermissions = new Map<string, { resolve: (v: any) => void }>();
 
-  ipcMain.handle('permission-request', (_event, request: { id: string; description: string; type: string }) => {
-    if (mainWindow) mainWindow.webContents.send('permission-request', request);
-    return new Promise((resolve) => { pendingPermissions.set(request.id, { resolve }); });
+  setPermissionUIBridge((request) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      // No UI available (headless / window closed) — deny destructive actions
+      return Promise.resolve({ requestId: request.id, action: 'deny' });
+    }
+    mainWindow.webContents.send('permission-request', request);
+    return new Promise((resolve) => {
+      pendingPermissions.set(request.id, { resolve });
+    });
   });
 
   ipcMain.handle('permission-response', (_event, response: { requestId: string; action: string; alwaysAllow?: boolean }) => {
@@ -229,6 +235,7 @@ function setupIPC(): void {
   ipcMain.handle('get-app-version', () => app.getVersion());
 }
 
+app.disableHardwareAcceleration();
 app.whenReady().then(async () => {
   await startInternalServer();
   setupIPC();

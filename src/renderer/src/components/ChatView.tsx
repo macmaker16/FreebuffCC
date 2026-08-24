@@ -10,9 +10,9 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Bot, User, Trash2, AlertCircle, FolderOpen, Folder, Check, Wifi, WifiOff, MessageSquare, Search, Clock, Coins, ChevronDown, ChevronRight, X, Copy, CheckCheck, Terminal, FileCode, Zap, History, PanelRight } from 'lucide-react';
+import { Send, Bot, User, Trash2, AlertCircle, FolderOpen, Folder, Check, Wifi, WifiOff, MessageSquare, Search, Clock, Coins, ChevronDown, ChevronRight, X, Copy, CheckCheck, Terminal, FileCode, Zap, History, PanelRight, Square, Circle, CheckCircle2, ListTodo } from 'lucide-react';
 import { Model, ModelStatus, ChatMessage } from '../types';
-import { sendAgentMessage, sendAgentMessageStream, generateId, fetchConversations, getConversation, deleteConversation, searchConversations, ConversationSummary, detectProject, getStats } from '../services/api';
+import { sendAgentMessage, sendAgentMessageStream, generateId, fetchConversations, getConversation, deleteConversation, searchConversations, ConversationSummary, detectProject, getStats, abortAgentRun, TodoItem } from '../services/api';
 import TerminalPanel from './TerminalPanel';
 import PermissionDialog from './PermissionDialog';
 import DiffViewer from './DiffViewer';
@@ -48,6 +48,9 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
   const [fileTree, setFileTree] = useState<string[]>([]);
   const [lastDiff, setLastDiff] = useState<any>(null);
   const [contextPanelWidth, setContextPanelWidth] = useState(380);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
+  const sessionIdRef = useRef<string | null>(null);
+  const streamAbortRef = useRef<(() => void) | null>(null);
   const isDragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
@@ -137,7 +140,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
       setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: '', timestamp: Date.now() }]);
 
       let streamedContent = '';
-      let abortRef: (() => void) | null = null;
+      streamAbortRef.current = null;
 
       const { abort } = sendAgentMessageStream(
         apiMessages, activeModel.id, activeModel.provider, activeConversationId || undefined,
@@ -146,6 +149,13 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             streamedContent += token;
             setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: streamedContent } : m));
           },
+          onSession: (info) => {
+            sessionIdRef.current = info.sessionId || null;
+            if (info.conversationId !== undefined) {
+              setActiveConversationId(info.conversationId);
+            }
+          },
+          onTodos: (nextTodos) => setTodos(nextTodos),
           onToolStart: (tool, args, iteration) => {
             setToolActivity(prev => [...prev, { name: tool, status: 'running', detail: iteration.toString() }]);
             const eventId = generateId();
@@ -166,7 +176,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
               return updated;
             });
             // Capture diff for the DiffViewer panel
-            if (diff && tool === 'edit_file') {
+            if (diff && (tool === 'edit_file' || tool === 'write_file')) {
               setLastDiff(diff);
               setContextPanelTab('diff');
             }
@@ -195,8 +205,9 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
             setToolActivity([]);
           },
         },
+        sessionIdRef.current || undefined,
       );
-      abortRef = abort;
+      streamAbortRef.current = abort;
     } catch (err: any) {
       setMessages(prev => [...prev, {
         id: generateId(), role: 'assistant', content: `Error: ${err.message || 'Failed'}`, timestamp: Date.now(),
@@ -206,6 +217,38 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
     }
     inputRef.current?.focus();
   };
+
+  // ============================================================================
+  // INTERRUPT (Claude Code-style Esc / Stop)
+  // ============================================================================
+
+  const stopRun = useCallback(async () => {
+    if (!loading) return;
+    // Ask the server to kill the run first (stops LLM calls + tool loop)
+    if (sessionIdRef.current) {
+      await abortAgentRun(sessionIdRef.current).catch(() => {});
+    }
+    // Then tear down the SSE connection locally
+    streamAbortRef.current?.();
+    setLoading(false);
+    setToolActivity([]);
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last?.role === 'assistant' && !last.content.trim()) {
+        return [...prev.slice(0, -1), { ...last, content: '*Interrupted by user.*' }];
+      }
+      return prev;
+    });
+    inputRef.current?.focus();
+  }, [loading]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && loading) { e.preventDefault(); stopRun(); }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [loading, stopRun]);
 
   // ============================================================================
   // SLASH COMMANDS
@@ -226,6 +269,8 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
       case '/clear':
         setMessages([]);
         setActiveConversationId(null);
+        sessionIdRef.current = null;
+        setTodos([]);
         return { handled: true };
 
       case '/cost':
@@ -567,7 +612,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                 {workspaceSaved ? <Check size={8} className="text-green-400" /> : <FolderOpen size={8} />}
               </button>
             </div>
-            <button onClick={() => { setMessages([]); setActiveConversationId(null); }} disabled={messages.length === 0}
+            <button onClick={() => { setMessages([]); setActiveConversationId(null); sessionIdRef.current = null; setTodos([]); }} disabled={messages.length === 0}
               className="p-1.5 hover:bg-dark-800 rounded transition-colors text-dark-500 hover:text-white disabled:opacity-30 ml-1" title="New Chat">
               <Trash2 size={12} />
             </button>
@@ -605,6 +650,34 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                 className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-[10px] text-white font-medium transition-colors">
                 Deny
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Todo Checklist (agent task tracking) */}
+        {todos.length > 0 && (
+          <div className="px-4 py-2 border-b border-dark-700 bg-dark-900/60">
+            <div className="flex items-center gap-1.5 mb-1">
+              <ListTodo size={11} className="text-brand-400" />
+              <span className="text-[10px] font-bold text-dark-300">Tasks</span>
+              <span className="text-[9px] text-dark-500">{todos.filter(t => t.status === 'completed').length}/{todos.length}</span>
+            </div>
+            <div className="space-y-0.5">
+              {todos.map((t, i) => (
+                <div key={i} className="flex items-center gap-1.5 text-[10px]">
+                  {t.status === 'completed' ? (
+                    <CheckCircle2 size={10} className="text-green-400 flex-shrink-0" />
+                  ) : t.status === 'in_progress' ? (
+                    <Zap size={10} className="text-brand-400 animate-pulse flex-shrink-0" />
+                  ) : (
+                    <Circle size={10} className="text-dark-600 flex-shrink-0" />
+                  )}
+                  <span className={t.status === 'completed' ? 'text-dark-500 line-through'
+                    : t.status === 'in_progress' ? 'text-white font-medium' : 'text-dark-400'}>
+                    {t.content}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -668,7 +741,7 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
                   <div className="rounded-lg px-3 py-2 bg-dark-800">
                     <p className="text-[10px] text-dark-400 mb-1 flex items-center gap-1">
                       <Zap size={10} className="text-brand-400 animate-pulse" />
-                      Agent working...
+                      Agent working... <span className="text-dark-600">(Esc to stop)</span>
                     </p>
                     <div className="flex gap-0.5">
                       <div className="w-1.5 h-1.5 bg-brand-400 rounded-full typing-dot" />
@@ -704,10 +777,17 @@ export default function ChatView({ activeModel, modelStatuses, fallbackMsg }: Pr
               disabled={(!activeModel && !pendingPermission) || (loading && !pendingPermission)} rows={1}
               className="flex-1 px-3 py-1.5 bg-dark-900 border border-dark-700 rounded-lg text-xs text-white placeholder-dark-500 resize-none focus:outline-none focus:border-brand-500 disabled:opacity-50"
             />
-            <button onClick={handleSend} disabled={(!activeModel && !pendingPermission) || (loading && !pendingPermission) || !input.trim()}
-              className="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-600/50 rounded-lg transition-colors">
-              <Send size={14} />
-            </button>
+            {loading ? (
+              <button onClick={stopRun} title="Interrupt agent (Esc)"
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded-lg transition-colors animate-pulse">
+                <Square size={14} />
+              </button>
+            ) : (
+              <button onClick={handleSend} disabled={!activeModel || !input.trim()}
+                className="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-600/50 rounded-lg transition-colors">
+                <Send size={14} />
+              </button>
+            )}
           </div>
         </div>
       </div>

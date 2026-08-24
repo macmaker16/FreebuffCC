@@ -22,6 +22,11 @@ import { ConversationStore, ConversationMessage } from './conversations';
 import { SlashCommandHandler } from './agent/slash-commands';
 import { TokenTracker } from './agent/token-tracker';
 import { ProjectDetector } from './agent/project-detection';
+import { PermissionManager, PermissionRequest, PermissionResponse } from './agent/permissions';
+import { CascadingPlanner } from './agent/planner';
+import { OutputInterceptor } from './agent/output-interceptor';
+import { ContextCompressionEngine } from './agent/context-compression';
+import { getRepoMapGenerator } from './agent/repo-map';
 import { exec } from 'child_process';
 import { readFile, writeFile, mkdir, access } from 'fs/promises';
 import { dirname, resolve, isAbsolute, join } from 'path';
@@ -108,64 +113,206 @@ const BLOCKED_COMMANDS = [
 ];
 
 // ============================================================================
-// SYSTEM PROMPT
+// AGENT RUNTIME STATE
 // ============================================================================
 
-const SYSTEM_PROMPT = `You are Michaelangelo, an autonomous AI coding assistant. You write code, create files, run commands, and build software — just like Claude Code.
+/** Human-in-the-loop permission manager (shared by all agent loops) */
+const permissionManager = new PermissionManager();
 
-## RULES
-- ALWAYS use tools to do the work. Never output code blocks, markdown, or plans without executing them.
-- When the user asks you to create something, actually create the files using write_file.
-- When the user asks you to modify something, read the file first, then use edit_file with the exact text to replace.
-- After making changes, verify by running the relevant command (build, test, lint).
-- If something fails, read the error output, fix it, and try again.
-- Be thorough — complete the entire task before stopping.
+/** Active agent runs keyed by session id — used for abort/interrupt (Esc) */
+const activeRuns = new Map<string, AbortController>();
 
-## HOW TO WORK
-1. **Explore** the workspace first: list_files to see what exists, search_files to find relevant code.
-2. **Read** the files you need to understand or modify: read_file.
-3. **Create/Edit** files: write_file for new files, edit_file for modifications.
-4. **Run** commands: npm install, npm test, npm run build, git commands, etc.
-5. **Verify** your work: check the output, read the files you changed.
+/** Per-session todo list (Claude Code-style task tracking) */
+interface TodoItem { content: string; status: 'pending' | 'in_progress' | 'completed'; }
+const sessionTodos = new Map<string, TodoItem[]>();
 
-## TOOLS
-- list_files: explore directories
-- read_file: read file contents (supports line_range for large files)
-- write_file: create new files (creates parent dirs automatically)
-- edit_file: modify existing files (search and replace exact text)
-- search_files: find code patterns with regex
-- glob_files: find files by name pattern
-- run_command: execute shell commands
+/** Per-session CascadingPlanner (Architect/Cascade planning mode) */
+const sessionPlanners = new Map<string, CascadingPlanner>();
+function getPlanner(sessionId: string): CascadingPlanner {
+  let p = sessionPlanners.get(sessionId);
+  if (!p) { p = new CascadingPlanner({ maxSteps: 15, autoApproveThreshold: 0 }); sessionPlanners.set(sessionId, p); }
+  return p;
+}
 
-## WORKSPACE
-Your workspace is: {{WORKSPACE}}
+/** Pending plan approvals: planId → resolver (GUI Approve/Reject endpoint resolves) */
+const pendingPlanApprovals = new Map<string, { resolve: (approved: boolean) => void; timer: NodeJS.Timeout }>();
+
+/** Wait for the user to approve/reject a plan. Resolves false on timeout or abort. */
+function waitForPlanApproval(planId: string, signal?: AbortSignal, timeoutMs = 10 * 60_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (approved: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+      pendingPlanApprovals.delete(planId);
+      resolve(approved);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const onAbort = () => finish(false);
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    pendingPlanApprovals.set(planId, { resolve: finish, timer });
+  });
+}
+
+/**
+ * Tool Output Interceptor (Cursor/Windsurf style): terminal output > 1500 tokens
+ * is compressed by a fast cheap local LLM (via the proxy) down to errors,
+ * error codes and stack frames. Falls back to smart truncation.
+ */
+function createCheapCompressor(): ((prompt: string) => Promise<string>) | undefined {
+  return async (prompt: string): Promise<string> => {
+    const endpoint = store.get('localLlmEndpoint');
+    if (!endpoint) throw new Error('no local LLM configured');
+    const model = (store.get('localLlmModel') as string) || 'llama3.2';
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const res = await fetch(`${endpoint}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${store.get('localLlmApiKey') || 'ollama'}` },
+        body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 500, temperature: 0.1 }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`compressor HTTP ${res.status}`);
+      const data = await res.json() as any;
+      const out = data.choices?.[0]?.message?.content;
+      if (!out) throw new Error('empty compressor response');
+      return out;
+    } finally { clearTimeout(t); }
+  };
+}
+const outputInterceptor = new OutputInterceptor({ maxTokens: 1500, llmCompressor: createCheapCompressor() });
+
+/**
+ * Context Compaction & Rehydration (Claude Code style): triggers at 60% of an
+ * assumed 32k window; compresses old tool traffic into a State Block and
+ * silently rehydrates the top hot-path files.
+ */
+const compressionEngine = new ContextCompressionEngine({
+  tokenThreshold: Math.floor(0.60 * 32_768),
+  hotWindowSize: 6,
+});
+
+function readWorkspaceFile(relPath: string): Promise<string | null> {
+  return readFile(resolvePath(relPath), 'utf-8').catch(() => null);
+}
+
+/** PageRank repo map generator (AST-elided), cached per workspace */
+function repoMap(): ReturnType<typeof getRepoMapGenerator> {
+  return getRepoMapGenerator(getWorkspaceDir());
+}
+
+/**
+ * UI bridge: called when the agent needs a permission decision.
+ * Set by main.ts so requests reach the renderer over IPC.
+ * Returns null when no UI is available (headless mode → auto-approve).
+ */
+let uiPermissionBridge: ((request: PermissionRequest) => Promise<PermissionResponse>) | null = null;
+
+export function setPermissionUIBridge(bridge: (request: PermissionRequest) => Promise<PermissionResponse>): void {
+  uiPermissionBridge = bridge;
+}
+
+/** Ask the user to approve an operation. Falls back sensibly in headless mode. */
+async function requestUserPermission(toolName: string, args: Record<string, any>, signal?: AbortSignal): Promise<PermissionResponse> {
+  if (!uiPermissionBridge || !permissionManager.requiresPermission(toolName, args)) {
+    return { requestId: 'auto', action: 'approve' };
+  }
+  const request = buildPermissionRequest(toolName, args);
+  const TIMEOUT_MS = 180_000;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      uiPermissionBridge(request),
+      new Promise<PermissionResponse>((resolve) => {
+        timer = setTimeout(() => resolve({ requestId: request.id, action: 'deny' }), TIMEOUT_MS);
+      }),
+      ...(signal ? [new Promise<PermissionResponse>((resolve) => {
+        signal.addEventListener('abort', () => resolve({ requestId: request.id, action: 'deny' }), { once: true });
+      })] : []),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function buildPermissionRequest(toolName: string, args: Record<string, any>): PermissionRequest {
+  const id = `perm_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  let type: PermissionRequest['type'] = 'bash';
+  let description = `Execute: ${toolName}`;
+  if (toolName === 'run_command') { type = 'bash'; description = `Execute: ${args.command}`; }
+  else if (toolName === 'write_file') { type = 'write'; description = `Write file: ${args.file_path}`; }
+  else if (toolName === 'edit_file') { type = 'edit'; description = `Edit file: ${args.file_path}`; }
+  return { id, timestamp: Date.now(), type, description, command: args.command, filePath: args.file_path };
+}
+
+// ============================================================================
+// SYSTEM PROMPT — structured for API prompt caching
+//
+// LAYOUT RULE (critical for provider prompt caches):
+//   1. STATIC band (top): identity, laws, tool protocol. Never interpolated.
+//      Byte-identical across every request → cache prefix hit.
+//   2. DYNAMIC band (bottom): workspace, commands, guardrails, repo map.
+//      Session-specific → isolated at the tail so the static prefix stays
+//      cacheable.
+// ============================================================================
+
+const SYSTEM_PROMPT_STATIC = `You are Michaelangelo, an expert AI coding agent: you work autonomously in a real codebase, using tools to read, search, plan, edit, and run — until the task is done.
+
+## OPERATING LAWS
+1. Do what was asked; nothing more. No unsolicited features, refactors, or comments.
+2. Act through tools. Never paste code into chat without creating/editing files.
+3. Understand before changing: consult the Repo Map, then read the exact code you will touch. Match existing style and libraries.
+4. SURGICAL EDITS ONLY: modify existing files with edit_file (exact search/replace). write_file is for brand-new files ONLY. Full-file rewrites of existing files are FORBIDDEN — they truncate code.
+5. edit_file requires old_string copied EXACTLY from the current file (re-read if unsure). Keep old_string minimal but unique.
+6. PLAN FIRST for multi-step work: call create_plan before your first mutation. After user approval, execute steps in order and track them with todo_write.
+7. If a command fails, READ the full error, fix, retry. Never end your turn on a broken build.
+8. Verify before finishing: run the project's build/test/lint commands when they exist.
+9. Finish with a short report: what changed, how it was verified.
+
+## TOOL PROTOCOL
+- list_files / glob_files / search_files — explore. read_file (line_range for big files) — read.
+- create_plan — REQUIRED before first file mutation on non-trivial tasks. One plan at a time; the user must approve it.
+- todo_write — maintain the checklist; exactly one item in_progress; mark completed immediately.
+- write_file / edit_file — mutations. These pass through visual diff review; a DENIED review means: do not re-attempt the same edit.
+- run_command — shell. Destructive system commands are blocked; other commands may require one-click user approval.
+- web_search / web_fetch / web_lookup — current external information via DuckDuckGo (free, no key).
+- browser_navigate / browser_screenshot / browser_get_content / browser_evaluate / browser_close — headless browser for visual analysis. Use after creating a UI to verify rendering.
+- dispatch_agent — spawn an isolated read-only sub-agent for independent research; merge its summary.
+
+## RESPONSE STYLE
+Concise and technical. No apologies, no filler, no restating the task.`;
+
+const SYSTEM_PROMPT_DYNAMIC_TEMPLATE = `
+## ENVIRONMENT (session-specific)
+Workspace root: {{WORKSPACE}} — file paths are relative to this unless absolute.
 {{PROJECT_COMMANDS}}
+{{PROJECT_INSTRUCTIONS}}
+{{REPO_MAP}}
 {{PROJECT_CONTEXT}}`;
 
-function getSystemPrompt(projectContext: string = '', projectInfo?: any): string {
+function getSystemPrompt(projectContext: string = '', projectInfo?: any, repoMap?: string): string {
   const workspace = getWorkspaceDir();
-  let prompt = SYSTEM_PROMPT.replace('{{WORKSPACE}}', workspace);
-  // Inject project commands if available
+  let dynamic = SYSTEM_PROMPT_DYNAMIC_TEMPLATE.replace('{{WORKSPACE}}', workspace);
   if (projectInfo) {
     const cmds: string[] = [];
     if (projectInfo.testCommand) cmds.push(`- Test: \`${projectInfo.testCommand}\``);
     if (projectInfo.buildCommand) cmds.push(`- Build: \`${projectInfo.buildCommand}\``);
     if (projectInfo.lintCommand) cmds.push(`- Lint: \`${projectInfo.lintCommand}\``);
     if (projectInfo.devCommand) cmds.push(`- Dev: \`${projectInfo.devCommand}\``);
-    if (cmds.length > 0) {
-      prompt = prompt.replace('{{PROJECT_COMMANDS}}', '\n## Project Commands\nUse these commands to verify your work:\n' + cmds.join('\n'));
-    } else {
-      prompt = prompt.replace('{{PROJECT_COMMANDS}}', '');
-    }
+    dynamic = dynamic.replace('{{PROJECT_COMMANDS}}', cmds.length > 0
+      ? '\n### Verified project commands\n' + cmds.join('\n') : '');
   } else {
-    prompt = prompt.replace('{{PROJECT_COMMANDS}}', '');
+    dynamic = dynamic.replace('{{PROJECT_COMMANDS}}', '');
   }
-  if (projectContext) {
-    prompt = prompt.replace('{{PROJECT_CONTEXT}}', '\n' + projectContext);
-  } else {
-    prompt = prompt.replace('{{PROJECT_CONTEXT}}', '');
-  }
-  return prompt;
+  dynamic = dynamic.replace('{{PROJECT_INSTRUCTIONS}}', projectInfo?.instructions
+    ? `\n### Project instructions (guardrails — follow strictly)\n${projectInfo.instructions}\n` : '');
+  dynamic = dynamic.replace('{{REPO_MAP}}', repoMap
+    ? `\n### Repo Map (PageRank-ranked, bodies elided with ⋮)\n${repoMap}\n` : '');
+  dynamic = dynamic.replace('{{PROJECT_CONTEXT}}', projectContext ? '\n' + projectContext : '');
+  return SYSTEM_PROMPT_STATIC + dynamic;
 }
 
 // ============================================================================
@@ -440,6 +587,55 @@ async function executeWebLookup(args: { query: string; max_chars?: number }): Pr
 
 interface ToolExecResult { output: string; diff?: any; }
 
+function executeTodoWrite(sessionId: string, args: any): string {
+  const todos: TodoItem[] = Array.isArray(args.todos) ? args.todos : [];
+  const valid = todos.filter(t => t && typeof t.content === 'string' && ['pending', 'in_progress', 'completed'].includes(t.status));
+  sessionTodos.set(sessionId, valid);
+  return `SUCCESS: Todo list updated (${valid.length} items: ${valid.filter(t => t.status === 'completed').length} completed, ${valid.filter(t => t.status === 'in_progress').length} in progress)`;
+}
+
+/**
+ * Execute a tool call with Claude Code-style permission gating.
+ * Returns denied/timed-out results as tool errors so the model can adapt.
+ */
+async function executeToolWithPermissions(
+  toolCall: ToolCall,
+  sessionId: string,
+  signal?: AbortSignal,
+  onEvent?: (event: string, data: any) => void,
+): Promise<ToolExecResult> {
+  if (signal?.aborted) return { output: 'ABORTED: run was interrupted by the user' };
+
+  // todo_write is handled locally — no permission needed
+  if (toolCall.function.name === 'todo_write') {
+    let args: any = {};
+    try { args = JSON.parse(toolCall.function.arguments); } catch { /* ignore */ }
+    const output = executeTodoWrite(sessionId, args);
+    // Push the fresh checklist to the UI immediately
+    onEvent?.('todos_updated', { todos: sessionTodos.get(sessionId) || [] });
+    return { output };
+  }
+
+  let args: Record<string, any> = {};
+  try { args = JSON.parse(toolCall.function.arguments); } catch { /* ignore */ }
+
+  // Permission gate (run_command / write_file / edit_file)
+  if (permissionManager.requiresPermission(toolCall.function.name, args)) {
+    const description = buildPermissionRequest(toolCall.function.name, args).description;
+    console.log(`[Permission] Requesting approval for ${toolCall.function.name}: ${description}`);
+    onEvent?.('tool_permission', { tool: toolCall.function.name, description });
+    const response = await requestUserPermission(toolCall.function.name, args, signal);
+    if (response.action !== 'approve') {
+      return { output: `DENIED: The user did not approve this operation (${description}). Continue without it or ask the user for guidance.` };
+    }
+    if (response.alwaysAllow) {
+      permissionManager.markAlwaysAllowed(toolCall.function.name);
+    }
+  }
+
+  return executeTool(toolCall);
+}
+
 async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
   let args: any;
   try { args = JSON.parse(toolCall.function.arguments); } catch { return { output: `ERROR: Failed to parse tool arguments` }; }
@@ -465,6 +661,10 @@ async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
       const result = await BrowserSkill.execute(toolCall.function.name, args, ctx);
       return { output: result.output || result.error || '(no output)' };
     }
+    case 'browser_close': {
+      await BrowserSkill.execute('browser_close', args, { sessionId: 'agentic', workspace: getWorkspaceDir(), model: '', messages: [], iteration: 0, maxIterations: 1, tools: new Map(), metadata: {} });
+      return { output: 'Browser closed.' };
+    }
     default: return { output: `ERROR: Unknown tool "${toolCall.function.name}"` };
   }
 }
@@ -473,11 +673,13 @@ async function executeTool(toolCall: ToolCall): Promise<ToolExecResult> {
 // LLM CALL
 // ============================================================================
 
-async function callLLM(baseUrl: string, apiKey: string, authPrefix: string, model: string, messages: ChatMessage[], tools?: any[]): Promise<any> {
+async function callLLM(baseUrl: string, apiKey: string, authPrefix: string, model: string, messages: ChatMessage[], tools?: any[], signal?: AbortSignal): Promise<any> {
   const body: any = { model, messages, max_tokens: 4096, temperature: 0.3 };
   if (tools && tools.length > 0) { body.tools = tools; }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+  const onExternalAbort = () => controller.abort();
+  signal?.addEventListener('abort', onExternalAbort, { once: true });
   try {
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -488,6 +690,7 @@ async function callLLM(baseUrl: string, apiKey: string, authPrefix: string, mode
     if (!response.ok) throw new Error(`API ${response.status}: ${await response.text().catch(() => '')}`);
     return await response.json();
   } catch (err: any) { clearTimeout(timeout); throw err; }
+  finally { signal?.removeEventListener('abort', onExternalAbort); }
 }
 
 // ============================================================================
@@ -650,7 +853,7 @@ interface StreamCallbacks {
 
 async function callLLMStream(
   baseUrl: string, apiKey: string, authPrefix: string, model: string,
-  messages: ChatMessage[], tools: any[] | undefined, callbacks: StreamCallbacks,
+  messages: ChatMessage[], tools: any[] | undefined, callbacks: StreamCallbacks, signal?: AbortSignal,
 ): Promise<{ content: string; toolCalls: ToolCall[]; usage: { prompt: number; completion: number } }> {
   const body: any = { model, messages, max_tokens: 4096, temperature: 0.3, stream: true };
   if (tools && tools.length > 0) { body.tools = tools; }
@@ -662,6 +865,8 @@ async function callLLMStream(
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+  const onExternalAbort = () => controller.abort();
+  signal?.addEventListener('abort', onExternalAbort, { once: true });
 
   let fullContent = '';
   const toolCallsMap: Record<number, { id: string; name: string; arguments: string }> = {};
@@ -751,17 +956,28 @@ async function callLLMStream(
     clearTimeout(timeout);
     throw err;
   }
+  finally { signal?.removeEventListener('abort', onExternalAbort); }
 }
 
 // ============================================================================
-// STREAMING AGENTIC LOOP (SSE generator)
+// STREAMING AGENTIC LOOP (real-time SSE emission, abortable)
 // ============================================================================
 
-async function* agenticLoopStream(
+interface StreamingRunResult {
+  content: string;
+  iterations: number;
+  totalToolCalls: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  aborted: boolean;
+}
+
+async function runStreamingAgent(
   baseUrl: string, apiKey: string, authPrefix: string, model: string, provider: string,
-  userMessages: ChatMessage[], conversationId?: string,
-): AsyncGenerator<{ event: string; data: any }> {
-  const session = `session_${Date.now()}`;
+  userMessages: ChatMessage[], conversationId: string | undefined, sessionId: string,
+  sendEvent: (event: string, data: any) => void,
+  signal: AbortSignal,
+): Promise<StreamingRunResult> {
   const projectInfo = projectDetector ? await projectDetector.detect() : null;
   const projectContext = projectInfo?.instructions || '';
   const messages: ChatMessage[] = [
@@ -769,86 +985,88 @@ async function* agenticLoopStream(
     ...userMessages,
   ];
 
-  yield { event: 'agent_start', data: {
+  // Restore any todos from a previous turn of this session
+  const existingTodos = sessionTodos.get(sessionId);
+  if (existingTodos?.length) {
+    sendEvent('todos_updated', { todos: existingTodos });
+  }
+
+  sendEvent('agent_start', {
     model, provider,
     prompt: userMessages.filter(m => m.role === 'user').pop()?.content?.substring(0, 200) || '',
-  }};
+  });
 
   let iterations = 0;
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
-  let conversationIdOut = conversationId;
+  let lastContent = '';
 
-  while (iterations < MAX_ITERATIONS) {
+  while (iterations < MAX_ITERATIONS && !signal.aborted) {
     iterations++;
-    yield { event: 'iteration_start', data: { iteration: iterations, maxIterations: MAX_ITERATIONS } };
-    yield { event: 'llm_call', data: { iteration: iterations, model } };
+    sendEvent('iteration_start', { iteration: iterations, maxIterations: MAX_ITERATIONS });
+    sendEvent('llm_call', { iteration: iterations, model, toolCount: TOOL_DEFINITIONS.length });
 
-    // Stream the LLM response
-    let streamContent = '';
-    let streamToolCalls: ToolCall[] = [];
+    // Stream tokens to the client AS THEY ARRIVE (Claude Code-style live output)
     let usage = { prompt: 0, completion: 0 };
-
-    const result = await callLLMStream(baseUrl, apiKey, authPrefix, model, messages, TOOL_DEFINITIONS, {
-      onToken: (token) => {
-        streamContent += token;
-        // We can't yield from a callback, so we store and will emit after
-      },
-      onToolCall: (tc) => { streamToolCalls.push(tc); },
-      onComplete: (u) => { usage = u; },
-    });
-
-    streamContent = result.content;
-    streamToolCalls = result.toolCalls;
-    usage = result.usage;
-
-    // Now yield the accumulated tokens as a single event
-    if (streamContent) {
-      yield { event: 'token_stream', data: { content: streamContent, iteration: iterations } };
+    let result;
+    try {
+      result = await callLLMStream(baseUrl, apiKey, authPrefix, model, messages, TOOL_DEFINITIONS, {
+        onToken: (token) => sendEvent('token_delta', { content: token, iteration: iterations }),
+        onComplete: (u) => { usage = u; },
+      }, signal);
+    } catch (err: any) {
+      if (signal.aborted || err.name === 'AbortError') break; // interrupted mid-generation
+      throw err;
     }
 
-    // Track token usage
+    const { content: streamContent, toolCalls: streamToolCalls } = result;
+    usage = result.usage;
+    lastContent = streamContent;
+
     totalPromptTokens += usage.prompt;
     totalCompletionTokens += usage.completion;
-    yield { event: 'token_usage', data: {
+    sendEvent('token_usage', {
       iteration: iterations,
       prompt: usage.prompt, completion: usage.completion,
       totalPrompt: totalPromptTokens, totalCompletion: totalCompletionTokens,
-    }};
+    });
 
-    // Push assistant message to context
-    messages.push({ role: 'assistant', content: streamContent, tool_calls: streamToolCalls.length > 0 ? streamToolCalls : undefined });
+    messages.push({
+      role: 'assistant',
+      content: streamContent,
+      tool_calls: streamToolCalls.length > 0 ? streamToolCalls : undefined,
+    });
 
-    // No tool calls — agent is done
-    if (streamToolCalls.length === 0) {
+    // No tool calls — the agent is done
+    if (streamToolCalls.length === 0 || signal.aborted) {
       console.log(`[Agent-Stream] Completed after ${iterations} iterations`);
-      yield { event: 'agent_end', data: {
-        iterations, totalToolCalls: messages.filter(m => m.role === 'tool').length,
-        totalPromptTokens, totalCompletionTokens, conversationId: conversationIdOut,
-      }};
-      return;
+      break;
     }
 
-    // Execute tool calls
+    // Execute tool calls sequentially with permission gating
     for (const toolCall of streamToolCalls) {
+      if (signal.aborted) break;
       let args: any = {};
       try { args = JSON.parse(toolCall.function.arguments); } catch { /* ignore */ }
-      yield { event: 'tool_start', data: { tool: toolCall.function.name, args, iteration: iterations } };
+      sendEvent('tool_start', { tool: toolCall.function.name, args, iteration: iterations });
+      console.log(`[Agent-Stream] Tool: ${toolCall.function.name}`);
 
-      const toolExecResult = await executeTool(toolCall);
+      const started = Date.now();
+      const toolExecResult = await executeToolWithPermissions(toolCall, sessionId, signal, sendEvent);
       const toolResult = toolExecResult.output;
-      const isSuccess = !toolResult.startsWith('ERROR');
-      yield { event: 'tool_complete', data: {
+      const isSuccess = !toolResult.startsWith('ERROR') && !toolResult.startsWith('DENIED');
+      sendEvent('tool_complete', {
         tool: toolCall.function.name, success: isSuccess,
         outputPreview: toolResult.substring(0, 300), iteration: iterations,
+        duration_ms: Date.now() - started,
         ...(toolExecResult.diff ? { diff: toolExecResult.diff } : {}),
-      }};
+      });
 
       messages.push({ role: 'tool', content: toolResult, tool_call_id: toolCall.id });
 
       // Save tool execution to conversation
-      if (conversationIdOut && conversationStore) {
-        await conversationStore.addMessage(conversationIdOut, {
+      if (conversationId && conversationStore) {
+        await conversationStore.addMessage(conversationId, {
           id: `tool_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
           role: 'tool', content: toolResult, timestamp: Date.now(),
         });
@@ -856,18 +1074,39 @@ async function* agenticLoopStream(
     }
   }
 
-  // Hit limit — get final summary
-  messages.push({ role: 'system', content: `[System: Max iterations (${MAX_ITERATIONS}) reached. Give final answer.]` });
-  const finalResponse = await callLLM(baseUrl, apiKey, authPrefix, model, messages);
-  if (finalResponse.choices?.[0]?.message) {
-    messages.push({ role: 'assistant', content: finalResponse.choices[0].message.content });
-    yield { event: 'token_stream', data: { content: finalResponse.choices[0].message.content, iteration: iterations } };
+  // Max iterations reached (not aborted) — force a final summary
+  let aborted = signal.aborted;
+  if (!aborted && iterations >= MAX_ITERATIONS) {
+    messages.push({ role: 'system', content: `[System: Max iterations (${MAX_ITERATIONS}) reached. Give your final answer now.]` });
+    try {
+      const final = await callLLMStream(baseUrl, apiKey, authPrefix, model, messages, undefined, {
+        onToken: (token) => sendEvent('token_delta', { content: token, iteration: iterations }),
+      }, signal);
+      lastContent = final.content || lastContent;
+      messages.push({ role: 'assistant', content: lastContent });
+    } catch (err: any) {
+      if (signal.aborted || err.name === 'AbortError') aborted = true;
+      else throw err;
+    }
   }
 
-  yield { event: 'agent_end', data: {
-    iterations, totalToolCalls: messages.filter(m => m.role === 'tool').length,
-    totalPromptTokens, totalCompletionTokens, conversationId: conversationIdOut,
-  }};
+  const finalTodos = sessionTodos.get(sessionId) || [];
+  sendEvent('agent_end', {
+    iterations,
+    totalToolCalls: messages.filter(m => m.role === 'tool').length,
+    totalPromptTokens, totalCompletionTokens,
+    conversationId, sessionId, aborted,
+    todos: finalTodos,
+  });
+
+  return {
+    content: lastContent,
+    iterations,
+    totalToolCalls: messages.filter(m => m.role === 'tool').length,
+    totalPromptTokens,
+    totalCompletionTokens,
+    aborted,
+  };
 }
 
 // ============================================================================
@@ -885,6 +1124,79 @@ const TOOL_DEFINITIONS = [
   { type: 'function', function: { name: 'web_search', description: 'Search the internet using DuckDuckGo. Returns top results with titles, URLs, and snippets. Use when you need current information, documentation, or solutions.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, max_results: { type: 'number', description: 'Max results (default 5, max 10)' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'web_fetch', description: 'Fetch a URL and return its content as readable text. Strips HTML for clean output.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'URL to fetch' }, max_chars: { type: 'number', description: 'Max characters (default 8000)' } }, required: ['url'] } } },
   { type: 'function', function: { name: 'web_lookup', description: 'Search and fetch the top result. Combines web_search + web_fetch for quick lookups.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'What to look up' }, max_chars: { type: 'number', description: 'Max characters for content' } }, required: ['query'] } } },
+  {
+    type: 'function',
+    function: {
+      name: 'todo_write',
+      description: 'Write the task checklist for the current task. Use for any task with 3+ distinct steps. Replace the entire list each call; keep exactly one item in_progress; mark items completed immediately when done.',
+      parameters: {
+        type: 'object',
+        properties: {
+          todos: {
+            type: 'array',
+            description: 'The full todo list (replaces previous state)',
+            items: {
+              type: 'object',
+              properties: {
+                content: { type: 'string', description: 'Short imperative description of the step' },
+                status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: 'Item status' },
+              },
+              required: ['content', 'status'],
+            },
+          },
+        },
+        required: ['todos'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_plan',
+      description: 'Create a structured execution plan (Architect mode). REQUIRED before your first file mutation on non-trivial tasks. The GUI pauses and asks the user to approve. Steps must be concrete and ordered by dependency.',
+      parameters: {
+        type: 'object',
+        properties: {
+          goal: { type: 'string', description: 'One-sentence statement of what the plan achieves' },
+          reasoning: { type: 'string', description: 'Why this approach was chosen (1-3 sentences)' },
+          steps: {
+            type: 'array',
+            description: 'Ordered, concrete steps',
+            items: {
+              type: 'object',
+              properties: {
+                description: { type: 'string', description: 'What will be done' },
+                tool: { type: 'string', description: 'Primary tool for the step (edit_file, write_file, run_command, ...)' },
+                target: { type: 'string', description: 'Target file path or command' },
+              },
+              required: ['description', 'tool'],
+            },
+          },
+        },
+        required: ['goal', 'steps'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'dispatch_agent',
+      description: 'Spawn an isolated read-only sub-agent with its own context window for independent research (codebase analysis, multi-file investigation). Returns its summary. Does not block on user.',
+      parameters: {
+        type: 'object',
+        properties: {
+          description: { type: 'string', description: 'Brief task description' },
+          prompt: { type: 'string', description: 'Detailed instructions for the sub-agent' },
+        },
+        required: ['description', 'prompt'],
+      },
+    },
+  },
+  { type: 'function', function: { name: 'browser_navigate', description: 'Navigate the headless browser to a URL. Use to open localhost dev servers or webpages for visual analysis.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'URL to navigate to (e.g., http://localhost:3000)' }, wait_until: { type: 'string', description: 'When to consider loaded: load, networkidle, domcontentloaded (default: load)' } }, required: ['url'] } } },
+  { type: 'function', function: { name: 'browser_screenshot', description: 'Take a screenshot of the current page. Returns the file path for visual analysis of rendered UI.', parameters: { type: 'object', properties: { filename: { type: 'string', description: 'Filename for the screenshot (default: auto-generated)' }, full_page: { type: 'boolean', description: 'Capture full scrollable page (default: viewport only)' }, selector: { type: 'string', description: 'CSS selector to screenshot a specific element' } }, required: [] } } },
+  { type: 'function', function: { name: 'browser_get_content', description: 'Get the text content of the current page or a specific element.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector (default: entire page)' }, max_length: { type: 'number', description: 'Max characters (default 5000)' } }, required: [] } } },
+  { type: 'function', function: { name: 'browser_evaluate', description: 'Evaluate JavaScript in the page context. Useful for querying DOM state, checking element counts, measuring sizes.', parameters: { type: 'object', properties: { expression: { type: 'string', description: 'JavaScript expression to evaluate' } }, required: ['expression'] } } },
+  { type: 'function', function: { name: 'browser_close', description: 'Close the headless browser. Call when done with visual analysis.', parameters: { type: 'object', properties: {}, required: [] } } },
 ];
 
 async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, model: string, provider: string, userMessages: ChatMessage[], conversationId?: string): Promise<{ messages: ChatMessage[]; iterations: number; tokenUsage: { prompt: number; completion: number } }> {
@@ -958,7 +1270,7 @@ async function agenticLoop(baseUrl: string, apiKey: string, authPrefix: string, 
         tool: toolCall.function.name, args, iteration: iterations,
       });
 
-      const execResult = await executeTool(toolCall);
+      const execResult = await executeToolWithPermissions(toolCall, session);
       const result = execResult.output;
       const isSuccess = !result.startsWith('ERROR');
       agentEventBus.emit('tool_complete', session, {
@@ -1264,16 +1576,19 @@ export async function startExpressApp(): Promise<express.Express> {
   });
 
   // ==========================================================================
-  // POST /api/agent/stream — Streaming agent endpoint (SSE)
+  // POST /api/agent/stream — Streaming agent endpoint (SSE, abortable)
   // ==========================================================================
   app.post('/api/agent/stream', async (req: Request, res: Response) => {
-    const { model, messages, provider: ep, conversationId } = req.body;
+    const { model, messages, provider: ep, conversationId, sessionId: clientSessionId } = req.body;
     if (!model || !messages) return res.status(400).json({ error: 'model and messages required' });
 
     const pk = (ep && ep !== 'auto' && PROVIDERS[ep]) ? ep : detectProvider(model);
     const provider = PROVIDERS[pk];
     const apiKey = provider.getApiKey();
     if (!apiKey) return res.status(400).json({ error: `No API key for ${pk}` });
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'messages required' });
+    }
 
     // Set up SSE headers (MUST be before flushHeaders)
     res.setHeader('Content-Type', 'text/event-stream');
@@ -1285,7 +1600,17 @@ export async function startExpressApp(): Promise<express.Express> {
     res.flushHeaders();
 
     let clientDisconnected = false;
-    res.on('close', () => { clientDisconnected = true; });
+    const sessionId = clientSessionId || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
+    const abortController = new AbortController();
+    activeRuns.set(sessionId, abortController);
+
+    const finishRun = () => { activeRuns.delete(sessionId); };
+    res.on('close', () => {
+      clientDisconnected = true;
+      // Client gone (window closed / fetch aborted) — stop the agent too
+      activeRuns.delete(sessionId);
+      if (!abortController.signal.aborted) abortController.abort();
+    });
 
     const sendEvent = (event: string, data: any) => {
       if (clientDisconnected || res.writableEnded) return;
@@ -1297,6 +1622,41 @@ export async function startExpressApp(): Promise<express.Express> {
 
     let convId = conversationId;
     try {
+      // Slash command parity with /api/agent — handle meta commands before streaming
+      let workMessages: ChatMessage[] = messages;
+      const lastUserMsg = messages.filter((m: any) => m.role === 'user').pop();
+      if (lastUserMsg?.content?.startsWith('/')) {
+        slashHandler.setModel(model, pk);
+        const result = await slashHandler.execute(lastUserMsg.content);
+        if (result.meta) {
+          if (result.action === 'clear') {
+            sendEvent('token_delta', { content: result.response, iteration: 0 });
+            sendEvent('session', { conversationId: null, model, provider: pk, sessionId, slashAction: 'clear' });
+            sendEvent('done', {});
+            finishRun();
+            res.write('', () => { res.end(); });
+            return;
+          }
+          if (result.action === 'load_session') {
+            const conv = conversationStore.get(result.payload);
+            sendEvent('session', { conversationId: conv?.id || null, model, provider: pk, sessionId, slashAction: 'load_session', conversation: conv });
+            sendEvent('token_delta', { content: result.response, iteration: 0 });
+            sendEvent('done', {});
+            finishRun();
+            res.write('', () => { res.end(); });
+            return;
+          }
+          sendEvent('token_delta', { content: result.response, iteration: 0 });
+          sendEvent('done', {});
+          finishRun();
+          res.write('', () => { res.end(); });
+          return;
+        }
+        // Non-meta command — forward expanded prompt to the agent
+        workMessages = [...messages];
+        workMessages[workMessages.length - 1] = { role: 'user', content: result.response };
+      }
+
       // Create conversation
       if (!convId) {
         const conv = await conversationStore.create(
@@ -1307,60 +1667,64 @@ export async function startExpressApp(): Promise<express.Express> {
       }
 
       // Save user message
-      const lastUserMsg = messages.filter((m: any) => m.role === 'user').pop();
+      const lastUserMsg2 = messages.filter((m: any) => m.role === 'user').pop();
       await conversationStore.addMessage(convId, {
         id: `msg_${Date.now()}`, role: 'user',
-        content: lastUserMsg?.content || '', timestamp: Date.now(),
+        content: lastUserMsg2?.content || '', timestamp: Date.now(),
       });
 
-      sendEvent('session', { conversationId: convId, model, provider: pk });
+      sendEvent('session', { conversationId: convId, model, provider: pk, sessionId });
 
       // Run the streaming agentic loop
-      let finalContent = '';
-      let finalIterations = 0;
-      let finalToolCalls = 0;
-      let totalPromptTokens = 0;
-      let totalCompletionTokens = 0;
+      const runResult = await runStreamingAgent(
+        getBaseUrl(provider), apiKey, provider.authPrefix, model, pk, workMessages, convId,
+        sessionId, sendEvent, abortController.signal,
+      );
 
-      for await (const evt of agenticLoopStream(
-        getBaseUrl(provider), apiKey, provider.authPrefix, model, pk, messages, convId,
-      )) {
-        sendEvent(evt.event, evt.data);
-
-        // Track final results
-        if (evt.event === 'agent_end') {
-          finalIterations = evt.data.iterations;
-          finalToolCalls = evt.data.totalToolCalls;
-          totalPromptTokens = evt.data.totalPromptTokens;
-          totalCompletionTokens = evt.data.totalCompletionTokens;
-        }
-        if (evt.event === 'token_stream') {
-          finalContent = evt.data.content;
-        }
-      }
+      // Record per-run token usage
+      const runUsage = tokenTracker.record(runResult.totalPromptTokens, runResult.totalCompletionTokens, model, pk);
 
       // Save final assistant message
-      if (finalContent) {
-        const usage = tokenTracker.record(totalPromptTokens, totalCompletionTokens, model, pk);
+      if (runResult.content) {
         await conversationStore.addMessage(convId, {
-          id: `msg_${Date.now()}`, role: 'assistant', content: finalContent, timestamp: Date.now(),
-          tokens: { prompt: totalPromptTokens, completion: totalCompletionTokens, total: totalPromptTokens + totalCompletionTokens },
-          cost: usage.estimatedCost,
-        });
-        sendEvent('metadata', {
-          iterations: finalIterations, totalToolCalls: finalToolCalls,
-          tokens: { prompt: totalPromptTokens, completion: totalCompletionTokens },
-          cost: usage.estimatedCost, conversationId: convId,
+          id: `msg_${Date.now()}`, role: 'assistant', content: runResult.content, timestamp: Date.now(),
+          tokens: { prompt: runResult.totalPromptTokens, completion: runResult.totalCompletionTokens, total: runResult.totalPromptTokens + runResult.totalCompletionTokens },
+          cost: runUsage.estimatedCost,
         });
       }
+      sendEvent('metadata', {
+        iterations: runResult.iterations, totalToolCalls: runResult.totalToolCalls,
+        tokens: { prompt: runResult.totalPromptTokens, completion: runResult.totalCompletionTokens },
+        cost: runUsage.estimatedCost, conversationId: convId,
+        aborted: runResult.aborted,
+      });
 
       sendEvent('done', {});
     } catch (err: any) {
+      console.error('[Agent-Stream] Error:', err.message);
       sendEvent('error', { message: err.message });
+      sendEvent('done', {});
+    } finally {
+      finishRun();
     }
 
     // Wait for the last write to flush before ending
     res.write('', () => { res.end(); });
+  });
+
+  // ==========================================================================
+  // POST /api/agent/abort — Interrupt a running agent session (Esc / Stop)
+  // ==========================================================================
+  app.post('/api/agent/abort', async (req: Request, res: Response) => {
+    const { sessionId } = req.body || {};
+    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+    const controller = activeRuns.get(sessionId);
+    if (controller && !controller.signal.aborted) {
+      controller.abort();
+      console.log(`[Agent-Stream] Aborted session ${sessionId}`);
+      return res.json({ success: true, aborted: true });
+    }
+    return res.json({ success: true, aborted: false });
   });
 
   // ==========================================================================

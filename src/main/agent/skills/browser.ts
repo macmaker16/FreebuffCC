@@ -400,6 +400,11 @@ async function executeBrowserTool(
         };
       }
 
+      case 'browser_close': {
+        await browserManager.close();
+        return { success: true, output: 'Browser closed.' };
+      }
+
       default:
         return { success: false, output: '', error: `Unknown browser tool: ${name}` };
     }

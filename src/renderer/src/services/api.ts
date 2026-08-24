@@ -69,14 +69,32 @@ export async function sendAgentMessage(
 // STREAMING AGENT
 // ============================================================================
 
+export interface SessionInfo {
+  conversationId: string | null;
+  model: string;
+  provider: string;
+  sessionId: string;
+  slashAction?: string;
+  conversation?: any;
+}
+
+export interface TodoItem {
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+}
+
 export interface StreamCallbacks {
   onToken?: (content: string) => void;
   onToolStart?: (tool: string, args: any, iteration: number) => void;
-  onToolComplete?: (tool: string, success: boolean, outputPreview: string, iteration: number, diff?: any) => void;
+  onToolComplete?: (tool: string, success: boolean, outputPreview: string, iteration: number, diff?: any, durationMs?: number) => void;
   onIterationStart?: (iteration: number, maxIterations: number) => void;
   onPhaseChange?: (phase: string, iteration: number) => void;
   onTokenUsage?: (prompt: number, completion: number, totalPrompt: number, totalCompletion: number) => void;
   onMetadata?: (meta: any) => void;
+  /** Fired when the server assigns/returns the run's identity */
+  onSession?: (info: SessionInfo) => void;
+  /** Fired whenever the agent updates its todo checklist */
+  onTodos?: (todos: TodoItem[]) => void;
   onError?: (message: string) => void;
   onDone?: () => void;
 }
@@ -84,6 +102,7 @@ export interface StreamCallbacks {
 export function sendAgentMessageStream(
   messages: Array<{ role: string; content: string }>,
   model: string, provider?: string, conversationId?: string, callbacks?: StreamCallbacks,
+  sessionId?: string,
 ): { abort: () => void } {
   const controller = new AbortController();
 
@@ -92,7 +111,7 @@ export function sendAgentMessageStream(
     const res = await fetch(`${baseUrl()}/api/agent/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, provider: provider || 'auto', messages, conversationId }),
+      body: JSON.stringify({ model, provider: provider || 'auto', messages, conversationId, sessionId }),
       signal: controller.signal,
     });
 
@@ -126,12 +145,18 @@ export function sendAgentMessageStream(
             try {
               const data = JSON.parse(dataStr);
               switch (currentEvent) {
+                case 'token_delta':
                 case 'token_stream': callbacks?.onToken?.(data.content); break;
                 case 'tool_start': callbacks?.onToolStart?.(data.tool, data.args, data.iteration); break;
-                case 'tool_complete': callbacks?.onToolComplete?.(data.tool, data.success, data.outputPreview, data.iteration, data.diff); break;
+                case 'tool_complete': callbacks?.onToolComplete?.(data.tool, data.success, data.outputPreview, data.iteration, data.diff, data.duration_ms); break;
                 case 'iteration_start': callbacks?.onIterationStart?.(data.iteration, data.maxIterations); break;
                 case 'phase_change': callbacks?.onPhaseChange?.(data.phase, data.iteration); break;
                 case 'token_usage': callbacks?.onTokenUsage?.(data.prompt, data.completion, data.totalPrompt, data.totalCompletion); break;
+                case 'session': callbacks?.onSession?.(data); break;
+                case 'todos_updated': callbacks?.onTodos?.(data.todos || []); break;
+                case 'agent_end':
+                  if (Array.isArray(data.todos)) callbacks?.onTodos?.(data.todos);
+                  break;
                 case 'metadata': callbacks?.onMetadata?.(data); break;
                 case 'error': callbacks?.onError?.(data.message); break;
                 case 'done': callbacks?.onDone?.(); break;
@@ -152,6 +177,24 @@ export function sendAgentMessageStream(
   })();
 
   return { abort: () => controller.abort() };
+}
+
+/**
+ * Interrupt a running agent session server-side (Claude Code-style Esc).
+ * Aborts the in-flight LLM request and stops the agentic loop.
+ */
+export async function abortAgentRun(sessionId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${baseUrl()}/api/agent/abort`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return !!data.aborted;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================================================
