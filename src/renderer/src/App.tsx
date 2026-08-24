@@ -56,7 +56,7 @@ function App() {
     fetchModels().then(setModels).catch(console.error);
   }, [apiReady]);
 
-  // Auto-test all models in parallel (batches of 10 to avoid flooding)
+  // Auto-test all models — remote in parallel, local sequentially (Ollama can only load one model at a time)
   const autoTestAll = useCallback(async (modelList: Model[]) => {
     if (autoTestDone.current || modelList.length === 0) return;
     autoTestDone.current = true;
@@ -69,31 +69,42 @@ function App() {
       return next;
     });
 
-    // Test in parallel batches of 10
+    // Separate remote and local models
+    const remoteModels = modelList.filter(m => m.provider !== 'local_llm');
+    const localModels = modelList.filter(m => m.provider === 'local_llm');
+
+    const testOne = async (model: Model) => {
+      try {
+        const result = await testModel(model.id, model.provider);
+        setModelStatuses(prev => {
+          const next = new Map(prev);
+          next.set(model.id, {
+            status: result.success ? 'online' : 'offline',
+            lastTested: Date.now(),
+            error: result.error,
+          });
+          return next;
+        });
+      } catch {
+        setModelStatuses(prev => {
+          const next = new Map(prev);
+          next.set(model.id, { status: 'offline', lastTested: Date.now(), error: 'Request failed' });
+          return next;
+        });
+      }
+    };
+
+    // Test remote models in parallel (batches of 10)
     const BATCH = 10;
-    for (let i = 0; i < modelList.length; i += BATCH) {
-      const batch = modelList.slice(i, i + BATCH);
-      await Promise.allSettled(batch.map(async (model) => {
-        try {
-          const result = await testModel(model.id, model.provider);
-          setModelStatuses(prev => {
-            const next = new Map(prev);
-            next.set(model.id, {
-              status: result.success ? 'online' : 'offline',
-              lastTested: Date.now(),
-              error: result.error,
-            });
-            return next;
-          });
-        } catch {
-          setModelStatuses(prev => {
-            const next = new Map(prev);
-            next.set(model.id, { status: 'offline', lastTested: Date.now(), error: 'Request failed' });
-            return next;
-          });
-        }
-      }));
+    for (let i = 0; i < remoteModels.length; i += BATCH) {
+      await Promise.allSettled(remoteModels.slice(i, i + BATCH).map(testOne));
     }
+
+    // Test local models SEQUENTIALLY — Ollama can only serve one at a time
+    for (const model of localModels) {
+      await testOne(model);
+    }
+
     setAutoTestRunning(false);
   }, []);
 

@@ -1738,7 +1738,7 @@ export async function startExpressApp(): Promise<express.Express> {
     const apiKey = provider.getApiKey();
     if (!apiKey) return res.json({ success: false, error: `No API key for ${pk}` });
     try {
-      const c = new AbortController(); const t = setTimeout(() => c.abort(), 30000);
+      const c = new AbortController(); const t = setTimeout(() => c.abort(), pk === 'local_llm' ? 120000 : 30000);
       const r = await fetch(`${getBaseUrl(provider)}/chat/completions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `${provider.authPrefix}${apiKey}` },
         body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Say exactly: Hello world' }], max_tokens: 50, temperature: 0.7 }),
