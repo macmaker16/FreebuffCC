@@ -88,6 +88,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/persona', description: 'Set custom system prompt for the agent', usage: '/persona <prompt>', category: 'project' },
   { name: '/coderabbit', description: 'Run CodeRabbit AI code review on current changes', usage: '/coderabbit [file-or-dir]', category: 'agent' },
   { name: '/audit', description: 'Full site audit: crawl links, check imports, find issues', usage: '/audit <url>', category: 'agent' },
+  { name: '/skills', description: 'List available skills or run a skill', usage: '/skills [skill-name]', category: 'agent' },
 
   // Info
   { name: '/help', description: 'Show all available commands', usage: '/help', category: 'info' },
@@ -160,6 +161,7 @@ export class SlashCommandHandler {
       case '/persona': return this.cmdPersona(args);
       case '/coderabbit': return this.cmdCoderabbit(args);
       case '/audit': return this.cmdAudit(args);
+      case '/skills': return this.cmdSkills(args);
       default:
         return {
           response: `Unknown command: ${command}\nType /help to see available commands.`,
@@ -742,6 +744,51 @@ export class SlashCommandHandler {
     if (!url) return { response: 'Usage: /audit <url>\nExample: /audit http://localhost:3000', meta: true };
     return {
       response: `[AUDIT MODE] Perform a full site audit on ${url}:\n1. Crawl all pages and find broken links (use check_links)\n2. Scan source files for broken imports (use fix_links)\n3. Check for accessibility issues\n4. Test all interactive elements\n5. Generate a full report with fixes`,
+      meta: false,
+    };
+  }
+
+  // ==========================================================================
+  // /skills — List or run skills
+  // ==========================================================================
+
+  private async cmdSkills(name: string): Promise<SlashCommandResult> {
+    const { BUILTIN_SKILLS } = require('./skills/builtin-skills');
+    // Load custom skills from workspace
+    const customSkillsDir = require('path').join(this.workspace, '.michaelangelo', 'skills');
+    let customSkills: any[] = [];
+    try {
+      const files = require('fs').readdirSync(customSkillsDir).filter((f: string) => f.endsWith('.json'));
+      customSkills = files.map((f: string) => {
+        try { return JSON.parse(require('fs').readFileSync(require('path').join(customSkillsDir, f), 'utf-8')); } catch { return null; }
+      }).filter(Boolean);
+    } catch { /* no custom skills */ }
+
+    const allSkills = [...BUILTIN_SKILLS, ...customSkills];
+
+    if (!name) {
+      // List all skills
+      const lines = ['**Available Skills:**\n'];
+      lines.push('**Built-in:**');
+      for (const s of BUILTIN_SKILLS) {
+        lines.push(`- \`${s.trigger}\` — ${s.description}`);
+      }
+      if (customSkills.length > 0) {
+        lines.push('\n**Custom:**');
+        for (const s of customSkills) {
+          lines.push(`- \`${s.trigger || s.name}\` — ${s.description}`);
+        }
+      }
+      lines.push('\n**Usage:** Type the trigger command (e.g., /review-pr) to run a skill.');
+      lines.push('**Create:** Place a .json skill file in .michaelangelo/skills/');
+      return { response: lines.join('\n'), meta: true };
+    }
+
+    // Run a specific skill
+    const skill = allSkills.find((s: any) => s.trigger === name || s.name === name);
+    if (!skill) return { response: `Skill not found: ${name}\nUse /skills to see available ones.`, meta: true };
+    return {
+      response: `[SKILL: ${skill.name}]\n${skill.description}\n\nExecuting skill workflow...`,
       meta: false,
     };
   }

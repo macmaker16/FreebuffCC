@@ -2051,6 +2051,21 @@ export async function startExpressApp(): Promise<express.Express> {
       messages[messages.length - 1] = { role: 'user', content: result.response };
     }
 
+    // Check for skill triggers (e.g., /review-pr, /fix-bugs)
+    const { detectSkillTrigger, expandSkillArgs } = require('./agent/skills/builtin-skills');
+    const skillMatch = detectSkillTrigger(lastUserMsg?.content || '');
+    if (skillMatch) {
+      console.log(`[Skill] Triggered: ${skillMatch.skill.name}`);
+      const skillSteps: string[] = [];
+      for (const step of skillMatch.skill.steps) {
+        const expandedArgs = expandSkillArgs(step.args, skillMatch.args);
+        skillSteps.push(`[${step.description}] ${step.action}(${JSON.stringify(expandedArgs)})`);
+      }
+      // Forward the skill execution plan to the agent
+      const skillPrompt = `Execute the following skill workflow:\n\n**Skill:** ${skillMatch.skill.name}\n**Description:** ${skillMatch.skill.description}\n\n**Steps:**\n${skillSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\nExecute each step in order using the appropriate tools.`;
+      messages[messages.length - 1] = { role: 'user', content: skillPrompt };
+    }
+
     console.log(`[Orchestrator] Starting: ${pk} → ${model}`);
 
     try {
@@ -2415,6 +2430,20 @@ export async function startExpressApp(): Promise<express.Express> {
   });
 
   // ==========================================================================
+  // GET /api/skills — List available skills
+  app.get('/api/skills', (_req: Request, res: Response) => {
+    const { BUILTIN_SKILLS } = require('./agent/skills/builtin-skills');
+    const customSkillsDir = require('path').join(getWorkspaceDir(), '.michaelangelo', 'skills');
+    let customSkills: any[] = [];
+    try {
+      const files = require('fs').readdirSync(customSkillsDir).filter((f: string) => f.endsWith('.json'));
+      customSkills = files.map((f: string) => {
+        try { return JSON.parse(require('fs').readFileSync(require('path').join(customSkillsDir, f), 'utf-8')); } catch { return null; }
+      }).filter(Boolean);
+    } catch { /* no custom skills */ }
+    res.json({ skills: [...BUILTIN_SKILLS, ...customSkills] });
+  });
+
   // GET /api/stats — Token/cost stats
   // ==========================================================================
   app.get('/api/stats', (_req: Request, res: Response) => {

@@ -6,12 +6,13 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Cpu, MessageSquare, Settings, Zap, Circle, Activity, Download, Check, RefreshCw, AlertCircle, Puzzle, Sun, Moon, Keyboard } from 'lucide-react';
+import { Cpu, MessageSquare, Settings, Zap, Circle, Activity, Download, Check, RefreshCw, AlertCircle, Puzzle, Sun, Moon, Keyboard, Wrench } from 'lucide-react';
 import ModelManager from './components/ModelManager';
 import ChatView from './components/ChatView';
 import SettingsView from './components/SettingsView';
 import AgentDashboard from './components/AgentDashboard';
 import PluginMarketplace from './components/PluginMarketplace';
+import SkillsView from './components/SkillsView';
 import { Model, ModelStatus } from './types';
 import { initAPI, fetchModels, testModel } from './services/api';
 
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
   { id: 'models', label: 'Models', icon: Cpu },
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
   { id: 'plugins', label: 'Plugins', icon: Puzzle },
+  { id: 'skills', label: 'Skills', icon: Wrench },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -321,6 +323,9 @@ function App() {
         )}
         {activeView === 'plugins' && (
           <PluginMarketplace />
+        )}
+        {activeView === 'skills' && (
+          <SkillsView />
         )}
         {activeView === 'settings' && (
           <SettingsView onSettingsSaved={() => { autoTestDone.current = false; fetchModels().then(setModels); }} />
