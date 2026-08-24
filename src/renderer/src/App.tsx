@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Cpu, MessageSquare, Settings, Zap, Circle, Activity, Download, Check, RefreshCw, AlertCircle, Puzzle } from 'lucide-react';
+import { Cpu, MessageSquare, Settings, Zap, Circle, Activity, Download, Check, RefreshCw, AlertCircle, Puzzle, Sun, Moon, Keyboard } from 'lucide-react';
 import ModelManager from './components/ModelManager';
 import ChatView from './components/ChatView';
 import SettingsView from './components/SettingsView';
@@ -35,6 +35,29 @@ function App() {
   const fallbackNotification = useRef<string | null>(null);
   const [fallbackMsg, setFallbackMsg] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<any>(null);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('theme') as any) || 'dark');
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // Theme toggle
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.classList.toggle('light', theme === 'light');
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'k') { e.preventDefault(); setActiveView('chat'); }
+      if (e.ctrlKey && e.key === 'm') { e.preventDefault(); setActiveView('models'); }
+      if (e.ctrlKey && e.key === ',') { e.preventDefault(); setActiveView('settings'); }
+      if (e.ctrlKey && e.key === 'd') { e.preventDefault(); setActiveView('dashboard'); }
+      if (e.ctrlKey && e.shiftKey && e.key === 'T') { e.preventDefault(); setTheme(t => t === 'dark' ? 'light' : 'dark'); }
+      if (e.key === '?' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); setShowShortcuts(s => !s); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   // Initialize API on mount
   useEffect(() => {
@@ -240,7 +263,36 @@ function App() {
           {updateStatus?.status === 'up-to-date' && (
             <p className="text-[10px] text-dark-500">Up to date</p>
           )}
+          {/* Theme Toggle */}
+          <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+            className="flex items-center gap-1.5 text-[10px] text-dark-500 hover:text-white transition-colors mt-1">
+            {theme === 'dark' ? <Sun size={10} /> : <Moon size={10} />}
+            <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+          </button>
+          {/* Keyboard Shortcuts */}
+          <button onClick={() => setShowShortcuts(s => !s)}
+            className="flex items-center gap-1.5 text-[10px] text-dark-600 hover:text-white transition-colors">
+            <Keyboard size={10} />
+            <span>Shortcuts (?)</span>
+          </button>
         </div>
+        {/* Keyboard Shortcuts Modal */}
+        {showShortcuts && (
+          <div className="absolute inset-0 z-50 bg-black/50 flex items-center justify-center" onClick={() => setShowShortcuts(false)}>
+            <div className="bg-dark-800 rounded-xl border border-dark-600 p-4 w-72 shadow-2xl" onClick={e => e.stopPropagation()}>
+              <h3 className="text-xs font-bold text-white mb-3">Keyboard Shortcuts</h3>
+              <div className="space-y-1.5 text-[10px]">
+                {[
+                  ['Ctrl+K', 'Chat view'], ['Ctrl+M', 'Models view'], ['Ctrl+D', 'Dashboard'], ['Ctrl+,', 'Settings'],
+                  ['Ctrl+Shift+T', 'Toggle theme'], ['Esc', 'Stop agent'], ['?', 'This dialog'],
+                ].map(([key, desc]) => (
+                  <div key={key} className="flex justify-between"><span className="text-dark-300">{desc}</span><kbd className="bg-dark-700 px-1.5 py-0.5 rounded text-dark-400 font-mono">{key}</kbd></div>
+                ))}
+              </div>
+              <button onClick={() => setShowShortcuts(false)} className="mt-3 w-full py-1 bg-dark-700 hover:bg-dark-600 rounded text-[10px] text-dark-300">Close</button>
+            </div>
+          </div>
+        )}
       </aside>
 
       {/* Main Content */}

@@ -75,6 +75,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   // Permissions
   { name: '/approve', description: 'Approve the pending tool call', usage: '/approve [always]', category: 'agent' },
   { name: '/deny', description: 'Deny the pending tool call', usage: '/deny', category: 'agent' },
+  { name: '/run', description: 'Run inline code snippet (JS, Python, Bash)', usage: '/run <code>', category: 'agent' },
+  { name: '/commit', description: 'Auto-stage and commit all changes', usage: '/commit [message]', category: 'agent' },
+  { name: '/branch', description: 'Create and switch to a new git branch', usage: '/branch <name>', category: 'agent' },
+  { name: '/template', description: 'Scaffold a project from a template', usage: '/template <react|nextjs|express|python|vanilla>', category: 'agent' },
+  { name: '/lang', description: 'Detect project language and set up tooling', usage: '/lang', category: 'project' },
 
   // Info
   { name: '/help', description: 'Show all available commands', usage: '/help', category: 'info' },
@@ -134,6 +139,11 @@ export class SlashCommandHandler {
       case '/fix': return this.cmdFix(args);
       case '/build': return this.cmdBuild();
       case '/resume': return this.cmdResume(args);
+      case '/run': return this.cmdRun(args);
+      case '/commit': return this.cmdCommit(args);
+      case '/branch': return this.cmdBranch(args);
+      case '/template': return this.cmdTemplate(args);
+      case '/lang': return this.cmdLang();
       default:
         return {
           response: `Unknown command: ${command}\nType /help to see available commands.`,
@@ -438,4 +448,121 @@ export class SlashCommandHandler {
       payload: sessionId,
     };
   }
+
+  // ==========================================================================
+  // /run — Execute inline code snippet
+  // ==========================================================================
+
+  private async cmdRun(code: string): Promise<SlashCommandResult> {
+    if (!code) return { response: 'Usage: /run <code>\nExample: /run console.log("hello")', meta: true };
+    const ext = code.includes('import ') || code.includes('require(') ? '.js' : code.startsWith('def ') || code.includes('print(') ? '.py' : '.sh';
+    const tmpFile = `__tmp_run${ext}`;
+    const { writeFile: wf, unlink } = require('fs/promises');
+    const { join } = require('path');
+    const filePath = join(this.workspace, tmpFile);
+    try {
+      await wf(filePath, code, 'utf-8');
+      const cmd = ext === '.py' ? `python3 ${tmpFile}` : ext === '.sh' ? `bash ${tmpFile}` : `node ${tmpFile}`;
+      const { stdout, stderr } = await execAsync(cmd, { cwd: this.workspace, timeout: 30000, maxBuffer: 1024 * 1024 });
+      await unlink(filePath).catch(() => {});
+      return { response: `**Output:**\n\n${stdout || '(no output)'}${stderr ? '\n**Errors:**\n' + stderr : ''}`, meta: true };
+    } catch (err: any) {
+      await unlink(filePath).catch(() => {});
+      return { response: `**Error:** ${err.message}`, meta: true };
+    }
+  }
+
+  // ==========================================================================
+  // /commit — Auto-stage and commit
+  // ==========================================================================
+
+  private async cmdCommit(message: string): Promise<SlashCommandResult> {
+    try {
+      // Auto-detect a good commit message if none provided
+      if (!message) {
+        const { stdout: status } = await execAsync('git status --short', { cwd: this.workspace, timeout: 10000 });
+        const changed = status.trim().split('\n').filter(l => l.trim());
+        const fileCount = changed.length;
+        const types = new Set<string>();
+        for (const line of changed) {
+          if (line.match(/\.(ts|tsx|js|jsx)$/)) types.add('code');
+          else if (line.match(/\.css|\.scss|tailwind/)) types.add('styles');
+          else if (line.match(/\.md|README/)) types.add('docs');
+          else if (line.match(/package\.json/)) types.add('deps');
+          else types.add('files');
+        }
+        message = `chore: update ${Array.from(types).join(', ')} (${fileCount} files)`;
+      }
+      await execAsync('git add -A', { cwd: this.workspace, timeout: 10000 });
+      const { stdout } = await execAsync(`git commit -m "${message.replace(/"/g, '\"')}"`, { cwd: this.workspace, timeout: 15000 });
+      return { response: `**Committed:** ${message}\n\n${stdout.trim()}`, meta: true };
+    } catch (err: any) {
+      return { response: `**Commit failed:** ${err.message}`, meta: true };
+    }
+  }
+
+  // ==========================================================================
+  // /branch — Create and switch branch
+  // ==========================================================================
+
+  private async cmdBranch(name: string): Promise<SlashCommandResult> {
+    if (!name) return { response: 'Usage: /branch <name>', meta: true };
+    try {
+      const { stdout, stderr } = await execAsync(`git checkout -b "${name}"`, { cwd: this.workspace, timeout: 10000 });
+      return { response: `**Created and switched to branch:** ${name}\n${stdout.trim()}`, meta: true };
+    } catch (err: any) {
+      return { response: `**Branch failed:** ${err.message}`, meta: true };
+    }
+  }
+
+  // ==========================================================================
+  // /template — Scaffold a project
+  // ==========================================================================
+
+  private async cmdTemplate(name: string): Promise<SlashCommandResult> {
+    if (!name) {
+      return { response: 'Available templates:\n- react — React + Vite + TypeScript\n- nextjs — Next.js + TypeScript\n- express — Express.js API\n- python — Python Flask\n- vanilla — Vanilla HTML/CSS/JS\n\nUsage: /template <name>', meta: true };
+    }
+    const templates: Record<string, string> = {
+      react: 'npx create-vite@latest . --template react-ts',
+      nextjs: 'npx create-next-app@latest . --typescript --tailwind --app',
+      express: 'npm init -y && npm i express && mkdir -p src && echo "const express = require(\"express\");\nconst app = express();\napp.get(\"/\", (req, res) => res.json({ hello: \"world\" }));\napp.listen(3000, () => console.log(\"Server running on port 3000\"));" > src/index.js',
+      python: 'python3 -m venv venv && pip install flask && mkdir -p src && echo "from flask import Flask\napp = Flask(__name__)\n@app.route(\"/\")\ndef hello(): return {\"hello\": \"world\"}\nif __name__ == \"__main__\": app.run(debug=True)" > src/app.py',
+      vanilla: 'mkdir -p src && echo "<!DOCTYPE html>\n<html><head><title>App</title></head><body><h1>Hello</h1><script src=\"src/main.js\"></script></body></html>" > index.html && echo "console.log(\"Hello world\");" > src/main.js',
+    };
+    if (!templates[name]) return { response: `Unknown template: ${name}. Use /template to see available ones.`, meta: true };
+    try {
+      const { stdout, stderr } = await execAsync(templates[name], { cwd: this.workspace, timeout: 60000, maxBuffer: 2 * 1024 * 1024 });
+      return { response: `**Template \"${name}\" scaffolded!**\n\n${stdout.substring(0, 500)}${stderr ? '\n' + stderr.substring(0, 200) : ''}`, meta: true };
+    } catch (err: any) {
+      return { response: `**Template failed:** ${err.message}`, meta: true };
+    }
+  }
+
+  // ==========================================================================
+  // /lang — Detect project language
+  // ==========================================================================
+
+  private async cmdLang(): Promise<SlashCommandResult> {
+    const { existsSync } = require('fs');
+    const { join } = require('path');
+    const ws = this.workspace;
+    const langs: string[] = [];
+    if (existsSync(join(ws, 'package.json'))) {
+      const pkg = JSON.parse(require('fs').readFileSync(join(ws, 'package.json'), 'utf-8'));
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      if (deps.react || deps.next || deps.vue) langs.push('JavaScript/TypeScript (React/Next.js)');
+      else langs.push('JavaScript/TypeScript (Node.js)');
+      const scripts = Object.keys(pkg.scripts || {});
+      if (scripts.length > 0) langs.push(`  Scripts: ${scripts.join(', ')}`);
+    }
+    if (existsSync(join(ws, 'requirements.txt')) || existsSync(join(ws, 'pyproject.toml')) || existsSync(join(ws, 'setup.py'))) langs.push('Python');
+    if (existsSync(join(ws, 'Cargo.toml'))) langs.push('Rust');
+    if (existsSync(join(ws, 'go.mod'))) langs.push('Go');
+    if (existsSync(join(ws, 'Gemfile'))) langs.push('Ruby');
+    if (existsSync(join(ws, 'pom.xml')) || existsSync(join(ws, 'build.gradle'))) langs.push('Java');
+    if (existsSync(join(ws, '*.csproj')) || existsSync(join(ws, '*.sln'))) langs.push('C#');
+    return { response: langs.length > 0 ? `**Detected languages:**\n${langs.map(l => `- ${l}`).join('\n')}` : 'No programming language detected. Use /template to scaffold a project.', meta: true };
+  }
 }
+
